@@ -112,7 +112,7 @@ if(ORACLES_SDL)
   endif()
 endif()
 
-add_library(oraclesui STATIC src/ui/ui.c src/ui/font_builtin.c src/ui/savefile.c src/ui/menu.c src/ui/settings.c src/ui/filter.c src/ui/controls.c src/ui/touch.c src/ui/syncui.c src/ui/home.c
+add_library(oraclesui STATIC src/ui/ui.c src/ui/font_builtin.c src/ui/savefile.c src/ui/menu.c src/ui/settings.c src/ui/filter.c src/ui/controls.c src/ui/touch.c src/ui/syncui.c src/ui/home.c src/ui/labels.c
   src/ui/upscale.cpp third_party/xbrz/xbrz.cpp third_party/hqx/hq2x.c third_party/hqx/hq3x.c)
 target_include_directories(oraclesui PUBLIC src PRIVATE third_party/xbrz third_party/hqx)
 # oraclesui carries C++ objects, so anything linking it links with the C++ driver.

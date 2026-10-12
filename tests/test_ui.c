@@ -9,6 +9,7 @@
 #include "ui/upscale.h"
 #include "ui/touch.h"
 #include "ui/syncui.h"
+#include "ui/labels.h"
 
 static uint8_t rom[0x80000];
 
@@ -603,6 +604,44 @@ static void upscale_factor_is_capped_at_the_window_scale(void) {
   ASSERT_EQ(memcmp(asked, capped, sizeof asked), 0);
 }
 
+static void labels_follow_device_style_and_bindings(void) {
+  ASSERT_EQ(pad_style_resolve(STYLE_AUTO, STYLE_PLAYSTATION), STYLE_PLAYSTATION);
+  ASSERT_EQ(pad_style_resolve(STYLE_AUTO, STYLE_AUTO), STYLE_XBOX);              // no pad seen yet
+  ASSERT_EQ(pad_style_resolve(STYLE_NINTENDO, STYLE_PLAYSTATION), STYLE_NINTENDO); // the setting wins
+  const char *ok, *back;
+  menu_hint_keys(DEVICE_KEYBOARD, STYLE_PLAYSTATION, &ok, &back);
+  ASSERT(!strcmp(ok, "Enter") && !strcmp(back, "Esc"));
+  menu_hint_keys(DEVICE_PAD, STYLE_PLAYSTATION, &ok, &back);
+  ASSERT(!strcmp(ok, "Cross") && !strcmp(back, "Circle"));
+  menu_hint_keys(DEVICE_PAD, STYLE_XBOX, &ok, &back);
+  ASSERT(!strcmp(ok, "A") && !strcmp(back, "B"));
+  menu_hint_keys(DEVICE_PAD, STYLE_NINTENDO, &ok, &back);
+  ASSERT(!strcmp(ok, "A") && !strcmp(back, "B"));
+  ASSERT(!strcmp(pad_style_name(STYLE_PLAYSTATION, 2), "SQUARE"));
+  ASSERT(!strcmp(pad_style_name(STYLE_XBOX, 4), "VIEW"));
+  ASSERT(pad_style_name(STYLE_NINTENDO, 0) == NULL);
+  ASSERT(!strcmp(pad_style_name(STYLE_PLAYSTATION, PAD_RIGHT_TRIGGER), "R2"));
+  Bindings b;
+  bindings_default(&b);
+  // keyboard: A X, B Z, Item X A, Item Y S
+  ASSERT_EQ(hud_slot_glyph(DEVICE_KEYBOARD, STYLE_XBOX, &b, HUD_A), 'X');
+  ASSERT_EQ(hud_slot_glyph(DEVICE_KEYBOARD, STYLE_XBOX, &b, HUD_B), 'Z');
+  ASSERT_EQ(hud_slot_glyph(DEVICE_KEYBOARD, STYLE_XBOX, &b, HUD_Y), 'S');
+  bindings_bind_key(&b, ACT_A, 44);                                      // Space: no glyph
+  ASSERT_EQ(hud_slot_glyph(DEVICE_KEYBOARD, STYLE_XBOX, &b, HUD_A), 'A');
+  bindings_bind_key(&b, ACT_B, 31);                                      // 2
+  ASSERT_EQ(hud_slot_glyph(DEVICE_KEYBOARD, STYLE_XBOX, &b, HUD_B), '2');
+  // pads: A SOUTH, B WEST, Item X NORTH, Item Y EAST
+  ASSERT_EQ(hud_slot_glyph(DEVICE_PAD, STYLE_XBOX, &b, HUD_B), 'X');
+  ASSERT_EQ(hud_slot_glyph(DEVICE_PAD, STYLE_XBOX, &b, HUD_X), 'Y');
+  ASSERT_EQ(hud_slot_glyph(DEVICE_PAD, STYLE_PLAYSTATION, &b, HUD_A), GLYPH_CROSS);
+  ASSERT_EQ(hud_slot_glyph(DEVICE_PAD, STYLE_PLAYSTATION, &b, HUD_Y), GLYPH_CIRCLE);
+  ASSERT_EQ(hud_slot_glyph(DEVICE_PAD, STYLE_NINTENDO, &b, HUD_B), 'B');  // Game Boy letters
+  bindings_bind_pad(&b, ACT_A, 9);                                        // LB: no glyph
+  ASSERT_EQ(hud_slot_glyph(DEVICE_PAD, STYLE_XBOX, &b, HUD_A), 'A');
+  ASSERT_EQ(hud_slot_glyph(DEVICE_TOUCH, STYLE_PLAYSTATION, &b, HUD_A), 'A');
+}
+
 int main(void) {
   RUN(font_loads_from_the_rom_offset);
   RUN(save_files_are_read_and_verified);
@@ -623,6 +662,7 @@ int main(void) {
   RUN(the_two_scalers_differ);
   RUN(upscale_factor_is_capped_at_the_window_scale);
   RUN(bindings_remap_and_persist);
+  RUN(labels_follow_device_style_and_bindings);
   RUN(touch_layout_fits_screens);
   RUN(sync_page_shows_the_rows_for_its_state);
   RUN(code_entry_edits_each_digit);
