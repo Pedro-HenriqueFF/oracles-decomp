@@ -282,12 +282,43 @@ static void overlay_draws_a_partially_clipped_glyph(void) {
     }
 }
 
+// Removes the per-process fixture root at exit. Without this every run leaks a directory under
+// TMPDIR -- harmless individually, but this binary is run ten times in a row as a flakiness gate,
+// so they accumulate fast. Registered from fixture_root so a run that never makes one pays nothing.
+static char fixture_root_path[512];
+static void remove_fixture_root(void) {
+  if (!fixture_root_path[0]) return;
+  char cmd[700];
+  snprintf(cmd, sizeof cmd, "chmod -R u+rwX '%s' 2>/dev/null; rm -rf '%s' '%s_outside_evil' '%s_outside_target'",
+           fixture_root_path, fixture_root_path, fixture_root_path, fixture_root_path);
+  (void)system(cmd);
+}
+
+// The fixture root, created once per process. It used to be a fixed "$TMPDIR/test_mods_root",
+// which is a real hazard rather than a tidiness point: TMPDIR is per *user* on macOS, not per
+// worktree, so two concurrent runs of this binary -- one person's `ctest` and another's, or two
+// git worktrees of this repo -- shared one directory. Either could rm -rf the other's mods
+// mid-load, and an_unreadable_mods_directory_is_a_failure deliberately chmods that directory to
+// 000, so the other run could meet a directory it cannot read. That cost a real, confusing ctest
+// failure in a parallel session, which looked like a mods bug and was not. mkdtemp rather than
+// getpid() because a PID is reused, and a run that dies before cleanup would otherwise hand its
+// leftovers to the next process to draw that number.
+static const char *fixture_root(void) {
+  static char root[512];
+  if (!root[0]) {
+    const char *tmp = getenv("TMPDIR");
+    if (!tmp || !*tmp) tmp = "/tmp";
+    snprintf(root, sizeof root, "%s/test_mods_root.XXXXXX", tmp);
+    ASSERT(mkdtemp(root));
+    snprintf(fixture_root_path, sizeof fixture_root_path, "%s", root);
+    atexit(remove_fixture_root);
+  }
+  return root;
+}
+
 // Writes <dir>/<id>/{mod.ini,main.lua} and returns <dir>.
 static const char *make_mod(const char *id, const char *ini, const char *lua) {
-  static char root[512];
-  const char *tmp = getenv("TMPDIR");
-  if (!tmp || !*tmp) tmp = "/tmp";
-  snprintf(root, sizeof root, "%s/test_mods_root", tmp);
+  const char *root = fixture_root();
   char dir[640], path[768];
   snprintf(dir, sizeof dir, "%s/%s", root, id);
   char cmd[800];
@@ -304,10 +335,7 @@ static const char *make_mod(const char *id, const char *ini, const char *lua) {
 // C string -- needed only by the embedded-NUL smuggling test below, since a plain `const char *`
 // can never represent a NUL byte in the middle of its own content.
 static const char *make_mod_bytes(const char *id, const unsigned char *ini_bytes, size_t ini_len) {
-  static char root[512];
-  const char *tmp = getenv("TMPDIR");
-  if (!tmp || !*tmp) tmp = "/tmp";
-  snprintf(root, sizeof root, "%s/test_mods_root", tmp);
+  const char *root = fixture_root();
   char dir[640], path[768];
   snprintf(dir, sizeof dir, "%s/%s", root, id);
   char cmd[800];
@@ -329,10 +357,11 @@ static const char *make_mod_bytes(const char *id, const unsigned char *ini_bytes
 // not worth an assertion), and every later test run then dies in make_mod's own
 // ASSERT_EQ(system(cmd), 0) until a human manually fixes the permissions.
 static void clear_mods(void) {
-  const char *tmp = getenv("TMPDIR");
-  if (!tmp || !*tmp) tmp = "/tmp";
+  const char *root = fixture_root();
   char cmd[700];
-  snprintf(cmd, sizeof cmd, "chmod -R u+rwX '%s/test_mods_root' 2>/dev/null; rm -rf '%s/test_mods_root'", tmp, tmp);
+  // Keeps the root itself, emptying it: fixture_root() made it once and every later test expects
+  // it to exist. chmod first because one test leaves it mode 000 on purpose.
+  snprintf(cmd, sizeof cmd, "chmod -R u+rwX '%s' 2>/dev/null; rm -rf '%s'/*", root, root);
   (void)system(cmd);
 }
 
@@ -469,10 +498,8 @@ static void mods_id_valid_rejects_hostile_input(void) {
 // which is easy to get wrong (e.g. passing a NULL base pointer to qsort).
 static void a_missing_mods_directory_is_not_a_failure(void) {
   clear_mods();
-  const char *tmp = getenv("TMPDIR");
-  if (!tmp || !*tmp) tmp = "/tmp";
   char dir[600];
-  snprintf(dir, sizeof dir, "%s/test_mods_root_does_not_exist", tmp);
+  snprintf(dir, sizeof dir, "%s/does_not_exist", fixture_root());
   ASSERT(mods_init(dir, true));
   ASSERT_EQ(mods_count(), 0);
   mods_shutdown();
@@ -480,10 +507,8 @@ static void a_missing_mods_directory_is_not_a_failure(void) {
 
 static void an_empty_mods_directory_has_no_mods(void) {
   clear_mods();
-  const char *tmp = getenv("TMPDIR");
-  if (!tmp || !*tmp) tmp = "/tmp";
   char dir[600];
-  snprintf(dir, sizeof dir, "%s/test_mods_root", tmp);
+  snprintf(dir, sizeof dir, "%s", fixture_root());
   char cmd[700];
   snprintf(cmd, sizeof cmd, "mkdir -p '%s'", dir);
   ASSERT_EQ(system(cmd), 0);
@@ -522,10 +547,8 @@ static bool an_unreadable_mods_directory_is_a_failure(void) {
 #else
   if (geteuid() == 0) SKIP_TEST("running as root; directory permissions don't block access");
   clear_mods();
-  const char *tmp = getenv("TMPDIR");
-  if (!tmp || !*tmp) tmp = "/tmp";
   char dir[600];
-  snprintf(dir, sizeof dir, "%s/test_mods_root", tmp);
+  snprintf(dir, sizeof dir, "%s", fixture_root());
   char cmd[700];
   snprintf(cmd, sizeof cmd, "mkdir -p '%s'", dir);
   ASSERT_EQ(system(cmd), 0);
@@ -908,10 +931,8 @@ static void crlf_line_endings_are_tolerated(void) {
 // this checks for the specific "has no mod.ini" message.
 static void a_folder_without_mod_ini_is_skipped(void) {
   clear_mods();
-  const char *tmp = getenv("TMPDIR");
-  if (!tmp || !*tmp) tmp = "/tmp";
   char root[600], dir[700], cmd[800];
-  snprintf(root, sizeof root, "%s/test_mods_root", tmp);
+  snprintf(root, sizeof root, "%s", fixture_root());
   snprintf(dir, sizeof dir, "%s/bare", root);
   snprintf(cmd, sizeof cmd, "mkdir -p '%s'", dir);
   ASSERT_EQ(system(cmd), 0);
@@ -1356,10 +1377,8 @@ static void mods_test_alarm_handler(int sig) {
 // fails this test (and kills the whole binary promptly) instead of hanging CI indefinitely.
 static bool a_fifo_mod_ini_does_not_hang(void) {
   clear_mods();
-  const char *tmp = getenv("TMPDIR");
-  if (!tmp || !*tmp) tmp = "/tmp";
   char root[600], dir[700], cmd[800];
-  snprintf(root, sizeof root, "%s/test_mods_root", tmp);
+  snprintf(root, sizeof root, "%s", fixture_root());
   snprintf(dir, sizeof dir, "%s/fifomod", root);
   snprintf(cmd, sizeof cmd, "mkdir -p '%s' && mkfifo '%s/mod.ini'", dir, dir);
   if (system(cmd) != 0) SKIP_TEST("mkfifo not available on this filesystem");
@@ -1378,10 +1397,8 @@ static bool a_fifo_mod_ini_does_not_hang(void) {
 // that stops the FIFO case above also stops this one before fopen is ever called.
 static bool a_symlink_to_a_character_device_does_not_hang(void) {
   clear_mods();
-  const char *tmp = getenv("TMPDIR");
-  if (!tmp || !*tmp) tmp = "/tmp";
   char root[600], dir[700], cmd[800];
-  snprintf(root, sizeof root, "%s/test_mods_root", tmp);
+  snprintf(root, sizeof root, "%s", fixture_root());
   snprintf(dir, sizeof dir, "%s/zeromod", root);
   snprintf(cmd, sizeof cmd, "mkdir -p '%s' && ln -sf /dev/zero '%s/mod.ini'", dir, dir);
   if (system(cmd) != 0) SKIP_TEST("/dev/zero not available on this machine");
@@ -1401,10 +1418,8 @@ static bool a_symlink_to_a_character_device_does_not_hang(void) {
 // unifies this across platforms as a side effect.
 static void a_directory_named_mod_ini_is_refused(void) {
   clear_mods();
-  const char *tmp = getenv("TMPDIR");
-  if (!tmp || !*tmp) tmp = "/tmp";
   char root[600], dir[700], cmd[800];
-  snprintf(root, sizeof root, "%s/test_mods_root", tmp);
+  snprintf(root, sizeof root, "%s", fixture_root());
   snprintf(dir, sizeof dir, "%s/dirmod", root);
   snprintf(cmd, sizeof cmd, "mkdir -p '%s/mod.ini'", dir);
   ASSERT_EQ(system(cmd), 0);
@@ -1568,10 +1583,8 @@ static void an_unbounded_allocation_mod_is_disabled_and_other_mods_still_load(vo
 // mod's own payload, the same category as a Lua error, not a reason to make it vanish.
 static void a_mod_with_no_main_lua_is_refused_clearly(void) {
   clear_mods();
-  const char *tmp = getenv("TMPDIR");
-  if (!tmp || !*tmp) tmp = "/tmp";
   char root[600], dir[700], cmd[800];
-  snprintf(root, sizeof root, "%s/test_mods_root", tmp);
+  snprintf(root, sizeof root, "%s", fixture_root());
   snprintf(dir, sizeof dir, "%s/nomain", root);
   snprintf(cmd, sizeof cmd,
       "mkdir -p '%s' && printf 'id=nomain\\napi=1\\ngames=ages,seasons\\n' > '%s/mod.ini'", dir, dir);
@@ -1597,10 +1610,8 @@ static void a_mod_with_no_main_lua_is_refused_clearly(void) {
 // (and kills the whole binary promptly) instead of hanging CI indefinitely.
 static bool a_fifo_main_lua_does_not_hang(void) {
   clear_mods();
-  const char *tmp = getenv("TMPDIR");
-  if (!tmp || !*tmp) tmp = "/tmp";
   char root[600], dir[700], cmd[900];
-  snprintf(root, sizeof root, "%s/test_mods_root", tmp);
+  snprintf(root, sizeof root, "%s", fixture_root());
   snprintf(dir, sizeof dir, "%s/fifolua", root);
   snprintf(cmd, sizeof cmd,
       "mkdir -p '%s' && printf 'id=fifolua\\napi=1\\ngames=ages,seasons\\n' > '%s/mod.ini' && mkfifo '%s/main.lua'",
@@ -1623,10 +1634,8 @@ static bool a_fifo_main_lua_does_not_hang(void) {
 // with no newline for lauxlib's loader to stop on, exactly like mod.ini's own version of this.
 static bool a_symlink_main_lua_to_a_character_device_does_not_hang(void) {
   clear_mods();
-  const char *tmp = getenv("TMPDIR");
-  if (!tmp || !*tmp) tmp = "/tmp";
   char root[600], dir[700], cmd[900];
-  snprintf(root, sizeof root, "%s/test_mods_root", tmp);
+  snprintf(root, sizeof root, "%s", fixture_root());
   snprintf(dir, sizeof dir, "%s/zerolua", root);
   snprintf(cmd, sizeof cmd,
       "mkdir -p '%s' && printf 'id=zerolua\\napi=1\\ngames=ages,seasons\\n' > '%s/mod.ini' && ln -sf /dev/zero '%s/main.lua'",
@@ -2567,10 +2576,8 @@ static void the_global_environment_is_exactly_the_granted_set(void) {
 // "t"-forced fix as load() does, not just load() itself.
 static void a_binary_main_lua_is_refused_safely(void) {
   clear_mods();
-  const char *tmp = getenv("TMPDIR");
-  if (!tmp || !*tmp) tmp = "/tmp";
   char root[600], dir[700], cmd[900];
-  snprintf(root, sizeof root, "%s/test_mods_root", tmp);
+  snprintf(root, sizeof root, "%s", fixture_root());
   snprintf(dir, sizeof dir, "%s/binarymain", root);
   snprintf(cmd, sizeof cmd,
       "mkdir -p '%s' && printf 'id=binarymain\\napi=1\\ngames=ages,seasons\\n' > '%s/mod.ini' && "
@@ -3607,11 +3614,11 @@ static void setting_accessors_reject_out_of_range_indices(void) {
 // target.
 static void a_symlinked_mod_folder_does_not_get_its_store_written_through_the_link(void) {
   clear_mods();
-  const char *tmp = getenv("TMPDIR");
-  if (!tmp || !*tmp) tmp = "/tmp";
   char root[700], outside[768], cmd[1700];
-  snprintf(root, sizeof root, "%s/test_mods_root", tmp);
-  snprintf(outside, sizeof outside, "%s/test_mods_outside_evil", tmp);
+  snprintf(root, sizeof root, "%s", fixture_root());
+  // Deliberately a sibling of the fixture root, not inside it: the point of this test is a mod
+  // folder symlinked to somewhere the mods directory does not contain.
+  snprintf(outside, sizeof outside, "%s_outside_evil", fixture_root());
   snprintf(cmd, sizeof cmd, "rm -rf '%s' '%s'; mkdir -p '%s' '%s'", root, outside, root, outside);
   ASSERT_EQ(system(cmd), 0);
 
@@ -3653,10 +3660,11 @@ static void a_symlinked_mod_folder_does_not_get_its_store_written_through_the_li
 // pins.
 static void a_planted_store_ini_symlink_is_not_written_through(void) {
   clear_mods();
-  const char *tmp = getenv("TMPDIR");
-  if (!tmp || !*tmp) tmp = "/tmp";
   char outside[768], cmd[1200];
-  snprintf(outside, sizeof outside, "%s/test_mods_outside_target", tmp);
+  // A sibling of the fixture root rather than a fixed $TMPDIR name: this is the symlink's target,
+  // and two concurrent runs of this binary sharing one path meant each could delete the other's
+  // target between the write attempt and the stat below. Caught by running four suites at once.
+  snprintf(outside, sizeof outside, "%s_outside_target", fixture_root());
   snprintf(cmd, sizeof cmd, "rm -f '%s'; : > '%s'", outside, outside);
   ASSERT_EQ(system(cmd), 0);
 
@@ -3840,10 +3848,8 @@ static void active_id_is_empty_outside_any_mod_call(void) {
 // binary promptly) instead of hanging CI indefinitely.
 static bool a_fifo_store_ini_does_not_hang(void) {
   clear_mods();
-  const char *tmp = getenv("TMPDIR");
-  if (!tmp || !*tmp) tmp = "/tmp";
   char root[600], dir[700], cmd[900];
-  snprintf(root, sizeof root, "%s/test_mods_root", tmp);
+  snprintf(root, sizeof root, "%s", fixture_root());
   snprintf(dir, sizeof dir, "%s/fifostore", root);
   snprintf(cmd, sizeof cmd, "mkdir -p '%s' && mkfifo '%s/store.ini'", dir, dir);
   if (system(cmd) != 0) SKIP_TEST("mkfifo not available on this filesystem");
@@ -3914,10 +3920,8 @@ static void a_nul_byte_in_store_ini_makes_it_unreadable_and_unwritable(void) {
 // end-to-end check.
 static void mods_frame_round_trips_wram3_and_room_geometry(void) {
   clear_mods();
-  const char *tmp = getenv("TMPDIR");
-  if (!tmp || !*tmp) tmp = "/tmp";
   char dir[600];
-  snprintf(dir, sizeof dir, "%s/test_mods_root", tmp);
+  snprintf(dir, sizeof dir, "%s", fixture_root());
   char cmd[700];
   snprintf(cmd, sizeof cmd, "mkdir -p '%s'", dir);
   ASSERT_EQ(system(cmd), 0);
