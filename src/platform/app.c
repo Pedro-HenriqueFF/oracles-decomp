@@ -525,6 +525,20 @@ static int rd_room(const GBSample *sample, bool seasons) {
   return sample->wram[0][seasons ? 0xc4c : 0xc30];
 }
 
+// The room's group, at the same low-12-bit bank-0 convention as rd_room above -- confirmed
+// against two independent existing readers of this exact address pair: tests/test_room.c's
+// record_cb (`w[r->seasons ? 0xc49 : 0xc2d]`) and this file's own write_crash_log a few hundred
+// lines down (`gb->wram[0][(ages ? 0xcc2d : 0xcc49) - 0xc000]`, i.e. the same offset written as a
+// full $Cxxx address minus $C000). All three agree, so this is not a guess.
+static int rd_room_group(const GBSample *sample, bool seasons) {
+  return sample->wram[0][seasons ? 0xc49 : 0xc2d];
+}
+
+// wRoomWidth/wRoomHeight, in 8x8 tiles -- unlike rd_room/rd_room_group above, these sit at the
+// same address in both games (see the plan's verified-facts table), so no seasons ternary.
+static int rd_room_w(const GBSample *sample) { return sample->wram[0][0xd0a]; }
+static int rd_room_h(const GBSample *sample) { return sample->wram[0][0xd0b]; }
+
 // A game frame: in widescreen the room around the camera fills the sides (the message stays centred).
 static void present_game(SDL_Renderer *ren, SDL_Texture *tex, const GBSample *sample, const uint8_t *rgb, bool seasons, const uint8_t *rom, size_t rom_size) {
   // Mods draw before the filters, so an overlay scales with the picture and takes the chosen
@@ -532,8 +546,28 @@ static void present_game(SDL_Renderer *ren, SDL_Texture *tex, const GBSample *sa
   // widescreen/narrow split below, rather than only after wide_render: the non-widescreen branch
   // returns through present() before ever reaching wide_render, so a mod would never run for the
   // (common) non-widescreen case if this were placed after it instead.
-  ModsFrame mf = {sample->wram[0], sample->hram, seasons, settings.widescreen ? WIDE_W : FB_W,
-                  rd_room(sample, seasons), rom, rom_size, overlay_font};
+  //
+  // Designated initializers, not positional: this struct already grew once since the launcher
+  // first built it positionally, and a positional init here would have silently misassigned the
+  // moment that happened -- see mods.h's own ModsFrame comment and tests/test_mods.c's identical
+  // reasoning for Task 4 of the Stage 1 plan. `sample` is never NULL here (present_game's only
+  // caller already dereferences it unguarded a line above), so wram[0]/wram[3] below are always
+  // valid, live pointers -- never the NULL case the struct's own comment documents for "before
+  // any game is running".
+  ModsFrame mf = {
+    .wram = sample->wram[0],
+    .wram3 = sample->wram[3],
+    .hram = sample->hram,
+    .seasons = seasons,
+    .width = settings.widescreen ? WIDE_W : FB_W,
+    .room = rd_room(sample, seasons),
+    .room_w = rd_room_w(sample),
+    .room_h = rd_room_h(sample),
+    .room_group = rd_room_group(sample, seasons),
+    .rom = rom,
+    .rom_size = rom_size,
+    .font = overlay_font,
+  };
   mods_frame(&mf);
   const ModOverlay *ov = mods_overlay();
 

@@ -137,18 +137,36 @@ void mods_escape_into(char *dst, size_t dst_size, const char *src, size_t src_le
 // reused by those later call sites rather than reinventing a charset check at each one.
 bool mods_id_valid(const char *id);
 
-// What the app hands the host each frame: game RAM windows, the picture's dimensions, and the
-// resources a mod's drawing bindings need (the ROM for draw_icon, the UI font for draw_text).
-// `wram`/`hram`/`rom`/`font` may each be NULL -- before any ROM/game is actually running, or (in
-// tests) deliberately, to exercise the guards every binding that touches them must have. `wram`,
-// when non-NULL, is always the full 4096 bytes $c000..$cfff: draw_icon relies on that to read
-// `wram + 0x600` as 256 further bytes without a separate bounds check of its own.
+// What the app hands the host each frame: game RAM windows, the picture's dimensions, the
+// current room's geometry, and the resources a mod's drawing bindings need (the ROM for
+// draw_icon, the UI font for draw_text).
+// `wram`/`wram3`/`hram`/`rom`/`font` may each be NULL -- before any ROM/game is actually running,
+// or (in tests) deliberately, to exercise the guards every binding that touches them must have.
+// `wram`, when non-NULL, is always the full 4096 bytes $c000..$cfff: draw_icon relies on that to
+// read `wram + 0x600` as 256 further bytes without a separate bounds check of its own. `wram3`,
+// when non-NULL, is likewise always the full 4096 bytes $d000..$dfff of WRAM bank 3 -- the fixed
+// physical bank w3TileCollisions always lives in, not whichever bank SVBK currently has switched
+// into the $d000 window -- and it is NULL in exactly the same circumstances `wram` is: no live
+// game yet, or a test that deliberately left it unset. That matters beyond this struct: a later
+// binding built on `wram3` (e.g. oracles.solidity) must return `nil` in that case rather than a
+// plausible-looking zero, because a solidity byte of 0 means "walkable" -- defaulting to 0 for
+// "no data" would be actively wrong, not merely uninformative, the same lesson Stage 1 learned
+// from oracles.screen() returning 0 before the first frame.
+// `room_w`/`room_h` are the current room's width/height in 8x8 tiles, exactly as wRoomWidth/
+// wRoomHeight hold them (a metatile-based consumer must halve them); `room_group` is the room's
+// group, read alongside `room` from the same pair of bank-0 addresses test_room.c's record_cb
+// and app.c's own write_crash_log already use for the identical purpose. All three are
+// derived from `wram` and so are only meaningful while it is non-NULL; like `room`, they default
+// to 0 otherwise rather than being independently NULL-able (they are plain ints, not pointers).
 typedef struct {
   const uint8_t *wram;          // $c000..$cfff, 4096 bytes, or NULL
+  const uint8_t *wram3;         // $d000..$dfff as WRAM bank 3, 4096 bytes, or NULL
   const uint8_t *hram;          // $ff80..$fffe, 127 bytes, or NULL
   bool seasons;
   int width;                    // the picture's width: 160, or 256 in widescreen
   int room;                     // the current room, for on_room_change
+  int room_w, room_h;           // the room in 8x8 tiles, as wRoomWidth/wRoomHeight hold them
+  int room_group;               // the room's group, for callers that need it with `room`
   const uint8_t *rom;           // for draw_icon; may be NULL
   size_t rom_size;
   const UiFont *font;           // for draw_text; may be NULL

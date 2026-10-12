@@ -3895,6 +3895,68 @@ static void a_nul_byte_in_store_ini_makes_it_unreadable_and_unwritable(void) {
   mods_shutdown();
 }
 
+// ---------------------------------------------------------------------------
+// Stage 3 Task 1: ModsFrame carries WRAM bank 3 and the room's geometry.
+// ---------------------------------------------------------------------------
+
+// mods_frame does a whole-struct assignment (`frame = *f` in mods.c), so every field placed in a
+// ModsFrame -- including wram3/room_w/room_h/room_group, new in this task -- already round-trips
+// through mods_current_frame() without any further code in mods.c. This test pins that fact
+// against a future refactor that copies fields one at a time and forgets one, and it uses
+// designated initializers for the same reason Task 4 of the Stage 1 plan required them for this
+// same struct: a positional initializer silently means something different (or, here, silently
+// leaves new trailing fields zeroed) the moment the struct grows.
+//
+// There is no Lua binding onto these fields yet -- that is Stage 3's Task 2 -- so this cannot
+// observe them from a mod's own Lua the way a_mod_sees_frames_and_draws above observes `wram`
+// through oracles.rd(). It is honestly a structural test: it proves the plumbing carries the
+// values through unchanged, not that a mod can see them. Task 2 is what turns this into an
+// end-to-end check.
+static void mods_frame_round_trips_wram3_and_room_geometry(void) {
+  clear_mods();
+  const char *tmp = getenv("TMPDIR");
+  if (!tmp || !*tmp) tmp = "/tmp";
+  char dir[600];
+  snprintf(dir, sizeof dir, "%s/test_mods_root", tmp);
+  char cmd[700];
+  snprintf(cmd, sizeof cmd, "mkdir -p '%s'", dir);
+  ASSERT_EQ(system(cmd), 0);
+  ASSERT(mods_init(dir, true));          // zero mods loaded; mods_frame still copies the frame
+
+  static uint8_t wram[0x1000], wram3[0x1000], hram[127];
+  memset(wram, 0, sizeof wram);
+  memset(wram3, 0x42, sizeof wram3);
+  memset(hram, 0, sizeof hram);
+
+  ModsFrame f1 = {
+    .wram = wram, .wram3 = wram3, .hram = hram, .seasons = true, .width = 160, .room = 3,
+    .room_w = 20, .room_h = 16, .room_group = 5,
+  };
+  mods_frame(&f1);
+  const ModsFrame *g1 = mods_current_frame();
+  ASSERT(g1->wram3 == wram3);                  // pointer identity, not a copy of the bytes
+  ASSERT_EQ(g1->wram3[0], 0x42);
+  ASSERT_EQ(g1->room_w, 20);
+  ASSERT_EQ(g1->room_h, 16);
+  ASSERT_EQ(g1->room_group, 5);
+
+  // A second call with different values (including wram3 going back to NULL) must overwrite,
+  // not accumulate or leave any of the three fields stale -- the thing that would happen if a
+  // future mods_frame copied `frame` field by field and missed one of these.
+  ModsFrame f2 = {
+    .wram = wram, .wram3 = NULL, .hram = hram, .seasons = false, .width = 256, .room = 3,
+    .room_w = 30, .room_h = 22, .room_group = 0,
+  };
+  mods_frame(&f2);
+  const ModsFrame *g2 = mods_current_frame();
+  ASSERT(g2->wram3 == NULL);
+  ASSERT_EQ(g2->room_w, 30);
+  ASSERT_EQ(g2->room_h, 22);
+  ASSERT_EQ(g2->room_group, 0);
+
+  mods_shutdown();
+}
+
 int main(void) {
   // The alarm handler's _exit(1) skips normal stdio teardown (deliberately: calling atexit
   // handlers or flushing from inside a signal handler is not safe), which means any buffered
@@ -4061,5 +4123,6 @@ int main(void) {
   RUN(active_id_is_empty_outside_any_mod_call);
   RUN_SKIPPABLE(a_fifo_store_ini_does_not_hang);
   RUN(a_nul_byte_in_store_ini_makes_it_unreadable_and_unwritable);
+  RUN(mods_frame_round_trips_wram3_and_room_geometry);
   return skipped ? 77 : 0;
 }
