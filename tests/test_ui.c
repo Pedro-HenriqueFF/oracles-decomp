@@ -171,6 +171,13 @@ static void settings_round_trip(void) {
   settings_parse(&back, "volume=99\nfilter=weird\nunknown=1\n  volume = 7\n");
   ASSERT_EQ(back.volume, 7);                            // 99 rejected, spaced line accepted
   ASSERT_EQ(back.filter, FILTER_CRT);
+  ASSERT_EQ(s.pad_style, STYLE_AUTO);
+  s.pad_style = STYLE_PLAYSTATION;
+  settings_format(&s, buf, sizeof buf);
+  settings_parse(&back, buf);
+  ASSERT_EQ(back.pad_style, STYLE_PLAYSTATION);
+  settings_parse(&back, "controller_style=sega\n");                 // unknown: kept as it was
+  ASSERT_EQ(back.pad_style, STYLE_PLAYSTATION);
 }
 
 static void settings_menu_changes_values(void) {
@@ -195,6 +202,8 @@ static void settings_menu_changes_values(void) {
   ASSERT_EQ(m.sel, SET_SYNC);                           // the last row
   ASSERT_EQ(settings_press(&m, &s, UI_ACCEPT, &row), MENU_PICK);
   ASSERT_EQ(row, SET_SYNC);
+  settings_press(&m, &s, UI_UP, &row);
+  ASSERT_EQ(m.sel, SET_PAD_STYLE);
   settings_press(&m, &s, UI_UP, &row);
   ASSERT_EQ(m.sel, SET_CONTROLS);
   settings_press(&m, &s, UI_UP, &row);
@@ -244,6 +253,16 @@ static void settings_rows_follow_the_device(void) {
   ASSERT(s.haptics);
   settings_press(&m, &s, UI_UP, &row);
   ASSERT_EQ(m.sel, SET_FOUR_SLOTS);
+  m.sel = SET_CONTROLS;
+  settings_press(&m, &s, UI_DOWN, &row);
+  ASSERT_EQ(m.sel, SET_PAD_STYLE);                                  // shown on phones too
+  settings_press(&m, &s, UI_RIGHT, &row);
+  ASSERT_EQ(s.pad_style, STYLE_NINTENDO);
+  settings_press(&m, &s, UI_LEFT, &row);
+  settings_press(&m, &s, UI_LEFT, &row);
+  ASSERT_EQ(s.pad_style, STYLE_PLAYSTATION);                        // wraps
+  ASSERT_EQ(settings_press(&m, &s, UI_ACCEPT, &row), MENU_NONE);    // accept steps, not opens
+  ASSERT_EQ(s.pad_style, STYLE_AUTO);
 }
 
 static void filters_keep_pixel_alignment(void) {
