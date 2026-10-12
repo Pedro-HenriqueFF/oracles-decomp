@@ -3,11 +3,10 @@
 #include <stddef.h>
 
 const char *const pad_style_keys[STYLES] = {"auto", "nintendo", "xbox", "playstation"};
-const char *const pad_style_labels[STYLES] = {"Auto", "Nintendo", "Xbox", "PlayStation"};
 
 // SDL gamepad buttons by position: SOUTH 0, EAST 1, WEST 2, NORTH 3, BACK 4, GUIDE 5, START 6,
 // LEFT_STICK 7, RIGHT_STICK 8, LEFT_SHOULDER 9, RIGHT_SHOULDER 10.
-enum { PAD_SOUTH, PAD_EAST, PAD_WEST, PAD_NORTH, PAD_BACK, PAD_GUIDE, PAD_START, PAD_LSTICK, PAD_RSTICK, PAD_LB, PAD_RB, PAD_NAMED };
+enum { PAD_SOUTH, PAD_EAST, PAD_WEST, PAD_NORTH, PAD_BACK, PAD_GUIDE, PAD_START, PAD_LSTICK, PAD_RSTICK, PAD_LB, PAD_RB, PAD_NAMED, PAD_FACES = PAD_NORTH + 1 };
 
 PadStyle pad_style_resolve(PadStyle setting, PadStyle detected) {
   PadStyle s = setting == STYLE_AUTO ? detected : setting;
@@ -34,6 +33,7 @@ const char *pad_style_name(PadStyle resolved, int button) {
 static const Action slot_action[HUD_SLOTS] = {ACT_ITEM_X, ACT_ITEM_Y, ACT_B, ACT_A};
 static const char slot_letter[HUD_SLOTS] = {'X', 'Y', 'B', 'A'};
 
+// SDL scancodes: A-Z 4-29, 1-9 30-38, 0 39.
 static uint8_t key_glyph(int sc) {
   if (sc >= 4 && sc <= 29) return (uint8_t)('A' + sc - 4);
   if (sc >= 30 && sc <= 38) return (uint8_t)('1' + sc - 30);
@@ -42,9 +42,9 @@ static uint8_t key_glyph(int sc) {
 }
 
 static uint8_t pad_glyph(PadStyle resolved, int button) {
-  static const uint8_t xbox[4] = {'A', 'B', 'X', 'Y'};
-  static const uint8_t ps[4] = {GLYPH_CROSS, GLYPH_CIRCLE, GLYPH_SQUARE, GLYPH_TRIANGLE};
-  if (button < PAD_SOUTH || button > PAD_NORTH) return 0;  // only the face buttons fit the bar
+  static const uint8_t xbox[PAD_FACES] = {'A', 'B', 'X', 'Y'};
+  static const uint8_t ps[PAD_FACES] = {HUD_GLYPH_CROSS, HUD_GLYPH_CIRCLE, HUD_GLYPH_SQUARE, HUD_GLYPH_TRIANGLE};
+  if (button < PAD_SOUTH || button >= PAD_FACES) return 0;  // only the face buttons fit the bar
   return resolved == STYLE_PLAYSTATION ? ps[button] : xbox[button];
 }
 

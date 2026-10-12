@@ -634,12 +634,20 @@ static void labels_follow_device_style_and_bindings(void) {
   // pads: A SOUTH, B WEST, Item X NORTH, Item Y EAST
   ASSERT_EQ(hud_slot_glyph(DEVICE_PAD, STYLE_XBOX, &b, HUD_B), 'X');
   ASSERT_EQ(hud_slot_glyph(DEVICE_PAD, STYLE_XBOX, &b, HUD_X), 'Y');
-  ASSERT_EQ(hud_slot_glyph(DEVICE_PAD, STYLE_PLAYSTATION, &b, HUD_A), GLYPH_CROSS);
-  ASSERT_EQ(hud_slot_glyph(DEVICE_PAD, STYLE_PLAYSTATION, &b, HUD_Y), GLYPH_CIRCLE);
+  ASSERT_EQ(hud_slot_glyph(DEVICE_PAD, STYLE_PLAYSTATION, &b, HUD_A), HUD_GLYPH_CROSS);
+  ASSERT_EQ(hud_slot_glyph(DEVICE_PAD, STYLE_PLAYSTATION, &b, HUD_Y), HUD_GLYPH_CIRCLE);
   ASSERT_EQ(hud_slot_glyph(DEVICE_PAD, STYLE_NINTENDO, &b, HUD_B), 'B');  // Game Boy letters
   bindings_bind_pad(&b, ACT_A, 9);                                        // LB: no glyph
   ASSERT_EQ(hud_slot_glyph(DEVICE_PAD, STYLE_XBOX, &b, HUD_A), 'A');
   ASSERT_EQ(hud_slot_glyph(DEVICE_TOUCH, STYLE_PLAYSTATION, &b, HUD_A), 'A');
+  bindings_default(&b);                                                   // A on NORTH, as the spec has it
+  bindings_bind_pad(&b, ACT_A, 3);
+  ASSERT_EQ(hud_slot_glyph(DEVICE_PAD, STYLE_XBOX, &b, HUD_A), 'Y');
+  ASSERT_EQ(hud_slot_glyph(DEVICE_PAD, STYLE_PLAYSTATION, &b, HUD_A), HUD_GLYPH_TRIANGLE);
+  bindings_default(&b);
+  b.key[ACT_ITEM_X][0] = b.key[ACT_ITEM_X][1] = NO_BINDING;               // unbound: the slot letter
+  ASSERT_EQ(hud_slot_glyph(DEVICE_KEYBOARD, STYLE_XBOX, &b, HUD_X), 'X');
+  ASSERT(pad_style_name(STYLE_XBOX, 11) == NULL);                         // d-pad: SDL's own name
 }
 
 int main(void) {
