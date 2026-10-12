@@ -580,7 +580,7 @@ static void present_frame(SDL_Renderer *ren, const uint8_t *rgb, int pic_w) {
   bool toast_on = toast[0] && SDL_GetTicks() < toast_until;
   if (ui_layer || toast_on || waiting) {
     GuiFrame f = {{(float)layout.game_px.x, (float)layout.game_px.y, (float)layout.game_px.w, (float)layout.game_px.h},
-                  {(float)safe.x, (float)safe.y, (float)safe.w, (float)safe.h}, (float)w, (float)h, !touch_on};
+                  {(float)safe.x, (float)safe.y, (float)safe.w, (float)safe.h}, (float)w, (float)h, !touch_on, NULL, NULL};
     if (ui_layer) ui_layer(&f);
     else gui_begin(gui_display_scale());
     if (waiting) gui_wait(waiting, SDL_GetTicks(), &gui_t, &f);

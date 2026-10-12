@@ -22,7 +22,7 @@ int gui_pause(PauseMenu *m, const GuiTheme *t, const GuiFrame *f) {
           if (list_row(t, (Row){.id = id, .label = gui_str("%s", pause_labels[i]), .enabled = pause_enabled(m, (PauseItem)i)}, &sel, i)) tapped = i;
         }
       }
-      if (f->hints) label("Enter select   Esc resume", TAG, t->muted);
+      if (f->hints) label(hint_of(f, "select", "resume"), TAG, t->muted);
     }
   }
   m->sel = (PauseItem)sel;

@@ -100,7 +100,7 @@ int gui_home(Home *h, const GuiTheme *t, const GuiFrame *f, SettingsMenu *sm, co
       else if (h->files_page) files_page(h, t, &button);
       else game_rows(h, t, &button);
     }
-    hint_line(t, f, h->l.settings_tab ? "Enter change   Esc back" : "Enter play   Left/Right switch game   Esc quit");
+    hint_line(t, f, h->l.settings_tab ? hint_of(f, "change", "back") : gui_str("%s play   Left/Right switch game   %s quit", f->ok_key ? f->ok_key : "Enter", f->back_key ? f->back_key : "Esc").chars);
   }
   return button;
 }

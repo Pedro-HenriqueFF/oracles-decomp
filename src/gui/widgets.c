@@ -174,6 +174,10 @@ void hint_line(const GuiTheme *t, const GuiFrame *f, const char *s) {
   }
 }
 
+const char *hint_of(const GuiFrame *f, const char *ok_verb, const char *back_verb) {
+  return gui_str("%s %s   %s %s", f->ok_key ? f->ok_key : "Enter", ok_verb, f->back_key ? f->back_key : "Esc", back_verb).chars;
+}
+
 void paragraph(Clay_String s, float points, UiColor c, float top, float bottom) {
   CLAY({.layout = {.sizing = {CLAY_SIZING_GROW(0)}, .padding = {gui_px(14), gui_px(14), gui_px(top), gui_px(bottom)}}}) {
     CLAY_TEXT(s, gui_text(points, c));

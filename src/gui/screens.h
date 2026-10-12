@@ -15,7 +15,8 @@ typedef struct {
   SDL_FRect game;               // the game picture on the screen, render pixels
   SDL_FRect safe;               // the part of the screen clear of notches and system bars
   float w, h;                   // the whole screen
-  bool hints;                   // keyboard hints ("Enter select  Esc back"); off on touch screens
+  bool hints;                   // keyboard hints ("Enter select   Esc back"); off on touch screens
+  const char *ok_key, *back_key; // what the hints call accept and back ("Enter"/"Esc", "A"/"B", "Cross"/"Circle"); NULL = keyboard names
 } GuiFrame;
 
 #define GUI_NONE (-1)

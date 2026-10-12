@@ -117,7 +117,7 @@ bool gui_settings(SettingsMenu *m, const Settings *s, const char *sync_label, co
   bool back = false;
   keep_visible(CLAY_ID("SettingsList"), CLAY_IDI("Setting", m->sel));
   PAGE(t, f) {
-    back = header(t, "Settings", f->hints ? "Enter change  Esc back" : NULL);
+    back = header(t, "Settings", f->hints ? hint_of(f, "change", "back") : NULL);
     LIST("SettingsList") { settings_rows(m, s, sync_label, t, true, tap); }
   }
   return back;

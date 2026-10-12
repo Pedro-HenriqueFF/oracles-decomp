@@ -42,7 +42,7 @@ int gui_slots(SlotsMenu *m, const GuiTheme *t, const GuiFrame *f, uint32_t stamp
         }
       }
     }
-    hint_line(t, f, m->save ? "Enter save   Esc back" : "Enter load   Esc back");
+    hint_line(t, f, m->save ? hint_of(f, "save", "back") : hint_of(f, "load", "back"));
   }
   return tapped;
 }
