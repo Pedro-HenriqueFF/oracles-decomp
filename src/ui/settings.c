@@ -57,7 +57,7 @@ int settings_format(const Settings *s, char *out, size_t size) {
   int n = snprintf(out, size, "volume=%d\nfullscreen=%s\nfilter=%s\nscale=%s\nwidescreen=%s\ndim_sides=%s\ngbc_colours=%s\nfast_text=%s\nfast_menus=%s\nquick_swap=%s\nfour_slots=%s\nhaptics=%s\ncontroller_style=%s\n",
                    s->volume, s->fullscreen ? "on" : "off", filter_keys[s->filter], s->fill ? "fill" : "pixel", s->widescreen ? "on" : "off", s->dim_sides ? "on" : "off", s->gbc_colours ? "on" : "off",
                    s->fast_text ? "on" : "off", s->fast_menus ? "on" : "off", s->quick_swap ? "on" : "off", s->four_slots ? "on" : "off",
-                   s->haptics ? "on" : "off", pad_style_keys[s->pad_style]);
+                   s->haptics ? "on" : "off", pad_style_keys[s->pad_style < STYLES ? s->pad_style : STYLE_AUTO]);
   if (n < (int)size) n += bindings_format(&s->bindings, out + n, size - n);
   return n;
 }

@@ -176,8 +176,13 @@ static void settings_round_trip(void) {
   settings_format(&s, buf, sizeof buf);
   settings_parse(&back, buf);
   ASSERT_EQ(back.pad_style, STYLE_PLAYSTATION);
-  settings_parse(&back, "controller_style=sega\n");                 // unknown: kept as it was
+  settings_parse(&back, "controller_style=sega\n");    // unknown: kept as it was
   ASSERT_EQ(back.pad_style, STYLE_PLAYSTATION);
+  s.pad_style = (PadStyle)99;                          // out of range: written as auto
+  settings_format(&s, buf, sizeof buf);
+  back.pad_style = STYLE_XBOX;                         // so a missing line would show
+  settings_parse(&back, buf);
+  ASSERT_EQ(back.pad_style, STYLE_AUTO);
 }
 
 static void settings_menu_changes_values(void) {
@@ -238,6 +243,7 @@ static void settings_rows_follow_the_device(void) {
   settings_press(&m, &s, UI_DOWN, &row);
   ASSERT_EQ(m.sel, SET_CONTROLS);
   ASSERT(settings_row_shown(&m, SET_FULLSCREEN));
+  ASSERT(settings_row_shown(&m, SET_PAD_STYLE));
   settings_menu_open(&m, true);                         // a phone: Vibration, and no Fullscreen
   ASSERT(settings_row_shown(&m, SET_HAPTICS));
   ASSERT(!settings_row_shown(&m, SET_FULLSCREEN));
@@ -255,13 +261,13 @@ static void settings_rows_follow_the_device(void) {
   ASSERT_EQ(m.sel, SET_FOUR_SLOTS);
   m.sel = SET_CONTROLS;
   settings_press(&m, &s, UI_DOWN, &row);
-  ASSERT_EQ(m.sel, SET_PAD_STYLE);                                  // shown on phones too
+  ASSERT_EQ(m.sel, SET_PAD_STYLE);                     // shown on phones too
   settings_press(&m, &s, UI_RIGHT, &row);
   ASSERT_EQ(s.pad_style, STYLE_NINTENDO);
   settings_press(&m, &s, UI_LEFT, &row);
   settings_press(&m, &s, UI_LEFT, &row);
-  ASSERT_EQ(s.pad_style, STYLE_PLAYSTATION);                        // wraps
-  ASSERT_EQ(settings_press(&m, &s, UI_ACCEPT, &row), MENU_NONE);    // accept steps, not opens
+  ASSERT_EQ(s.pad_style, STYLE_PLAYSTATION);           // wraps
+  ASSERT_EQ(settings_press(&m, &s, UI_ACCEPT, &row), MENU_NONE); // accept steps, not opens
   ASSERT_EQ(s.pad_style, STYLE_AUTO);
 }
 

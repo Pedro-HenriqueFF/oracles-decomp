@@ -39,7 +39,7 @@ static Clay_String value_of(const Settings *s, const char *sync_label, int r, in
   case SET_SCALE: return gui_str("< %s >", s->fill ? "Fill" : "Pixel");
   case SET_COLOURS: return gui_str("< %s >", s->gbc_colours ? "GBC" : "Vivid");
   case SET_CONTROLS: return CLAY_STRING(">");
-  case SET_PAD_STYLE: return gui_str("< %s >", pad_style_labels[s->pad_style]);
+  case SET_PAD_STYLE: return gui_str("< %s >", pad_style_labels[s->pad_style < STYLES ? s->pad_style : STYLE_AUTO]);
   case SET_SYNC: return gui_str("%s  >", sync_label && sync_label[0] ? sync_label : "Off");
   default: return toggle ? gui_str("%s", toggle == 1 ? "On" : "Off") : (Clay_String){0};
   }
