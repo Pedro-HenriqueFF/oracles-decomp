@@ -132,7 +132,7 @@ Every pixel you draw is opaque; there is no blending. Where you draw nothing, th
 
 ## API reference
 
-Everything a mod can call lives in the `oracles` table. This is the whole of it — twelve functions.
+Everything a mod can call lives in the `oracles` table. This is the whole of it — thirteen functions.
 Anything not listed here does not exist (and a test fails the build if this list and the real one
 ever disagree).
 
@@ -255,6 +255,26 @@ Addresses are the game's own, and nearly all of them differ between Ages and Sea
 through `oracles.game()`, as above. The community Oracle of Ages/Seasons disassembly is where the
 names and addresses on this page come from.
 
+### `oracles.room()`
+
+Returns a table describing the current room: `{ group, room, width, height }`. Returns `nil` if no
+game is running yet.
+
+```lua
+local r = oracles.room()
+if r then oracles.log("room " .. r.room .. " is " .. r.width .. "x" .. r.height .. " metatiles") end
+```
+
+**`width` and `height` are in metatiles, not 8x8 tiles.** A metatile is the game's own unit of
+meaning — a bush, a wall, a stair is one metatile, two tiles wide and two tiles tall — and is the
+unit a future id-to-metatile mapping will use. A room that is 20 tiles wide reports `width = 10`
+here, not 20; halve any tile-based measurement you already have in mind, or double this one, before
+comparing the two.
+
+`room` is the same number `oracles.on_room_change`'s argument gives you. `group` and `room`
+together identify the room uniquely across the whole map — `room` numbers repeat across different
+groups, so `room` alone is not enough to tell two rooms apart.
+
 ### `oracles.screen()`
 
 Returns the picture's width in pixels: 160, or 256 when the player has widescreen on. The height is
@@ -307,7 +327,7 @@ in `pcall`. If you are storing something a player typed or a value from the game
 
 ## Stable and unstable
 
-The twelve functions above are the **stable core**, and the reason they can promise that is worth
+The thirteen functions above are the **stable core**, and the reason they can promise that is worth
 understanding, because it explains why some obvious-looking additions are not there.
 
 `oracles.rd` takes a **raw address**. Addresses are a property of the game — they are fixed by the

@@ -247,9 +247,17 @@ if(ORACLES_SDL)
   # which call through the engine directly rather than through app.c): installs a mod whose
   # on_room_change logs the room, drives the real app through the start of the known-good Seasons
   # movie, and asserts the handler actually fired with a room other than the pre-game default.
+  # The same mod also calls oracles.room() and checks its group/width/height against the backing
+  # bytes read independently via oracles.rd -- a useful regression check (e.g. for width/height),
+  # but NOT what catches app.c's rd_room_group ternary being swapped: room group is 0 for this
+  # whole early-game frame range, and so (confirmed by a WRAM dump) is the address the swapped
+  # ternary would read instead, so the two are indistinguishable here. A documented, open gap --
+  # see test_mods_room.py's own docstring and this task's report for what was tried (driving the
+  # same movie's TAS replay tens of thousands of frames further, by two different input encodings,
+  # looking for a non-zero group) and why it did not close this within a practical test budget.
   add_test(NAME mods_room COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/test_mods_room.py $<TARGET_FILE:oracles-native>
     "${GAME_ROM_DIR}/Legend of Zelda, The - Oracle of Seasons (USA, Australia).gbc" "${CMAKE_SOURCE_DIR}/tas/seasons-play.inputs")
-  set_tests_properties(mods_room PROPERTIES SKIP_RETURN_CODE 77 LABELS "rom" TIMEOUT 120)
+  set_tests_properties(mods_room PROPERTIES SKIP_RETURN_CODE 77 LABELS "rom" TIMEOUT 240)
 endif()
 add_test(NAME native_binary COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/check_native_binary.py $<TARGET_FILE:oraclesnative> ${NATIVE_BINARIES})
 

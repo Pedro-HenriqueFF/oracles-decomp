@@ -3957,6 +3957,115 @@ static void mods_frame_round_trips_wram3_and_room_geometry(void) {
   mods_shutdown();
 }
 
+// ---------------------------------------------------------------------------
+// Stage 3 Task 2: oracles.room().
+// ---------------------------------------------------------------------------
+
+// The end-to-end check Task 1's own comment said it could not provide: a mod observes group,
+// room, width and height through oracles.room() itself, and width/height come back halved into
+// metatiles (room_w=20/room_h=16 -> width=10/height=8), not the raw 8x8-tile counts ModsFrame
+// carries.
+static void a_mod_sees_room_group_and_metatile_dimensions(void) {
+  clear_mods();
+  const char *root = make_mod("roomsee", "id=roomsee\napi=1\ngames=ages,seasons\n",
+      "oracles.on_frame(function()\n"
+      "  local r = oracles.room()\n"
+      "  oracles.log('group=' .. r.group .. ' room=' .. r.room ..\n"
+      "              ' w=' .. r.width .. ' h=' .. r.height)\n"
+      "end)\n");
+  ASSERT(mods_init(root, true));
+  static uint8_t wram[0x1000], hram[127];
+  ModsFrame f = {
+    .wram = wram, .hram = hram, .seasons = true, .width = 160, .room = 42,
+    .room_w = 20, .room_h = 16, .room_group = 7,
+  };
+  mods_frame(&f);
+  ASSERT(mods_enabled(0));
+  ASSERT(mods_last_log());
+  ASSERT(strstr(mods_last_log(), "group=7 room=42 w=10 h=8") != NULL);
+  mods_shutdown();
+}
+
+// An odd room_w/room_h (never observed from the real game, but a synthetic ModsFrame can be
+// built with anything) still halves by plain truncating integer division rather than crashing
+// or rounding up -- 21/2 == 10, matching ordinary Lua `//` semantics a mod author would expect
+// from "divide by two". This is a deliberate choice about behaviour on an input the real game
+// never produces, not a claim that odd dimensions occur in practice (MODDING.md's own comment
+// on oracles.room, and l_room's, both say the halving is exact for every room the game has).
+static void room_halves_an_odd_dimension_by_truncation(void) {
+  clear_mods();
+  const char *root = make_mod("roomodd", "id=roomodd\napi=1\ngames=ages,seasons\n",
+      "oracles.on_frame(function()\n"
+      "  local r = oracles.room()\n"
+      "  oracles.log('w=' .. r.width .. ' h=' .. r.height)\n"
+      "end)\n");
+  ASSERT(mods_init(root, true));
+  static uint8_t wram[0x1000], hram[127];
+  ModsFrame f = {
+    .wram = wram, .hram = hram, .seasons = true, .width = 160, .room = 1,
+    .room_w = 21, .room_h = 17, .room_group = 0,
+  };
+  mods_frame(&f);
+  ASSERT(mods_enabled(0));
+  ASSERT(mods_last_log());
+  ASSERT(strstr(mods_last_log(), "w=10 h=8") != NULL);
+  mods_shutdown();
+}
+
+// Correction (carried from Task 1, closed here): oracles.room() must return nil, not a table of
+// zeroes, before any game is running -- a solidity-style lie, since 0 is a perfectly plausible
+// room/group/width/height and so a table of zeroes would be indistinguishable from a real room 0
+// of width 0. f->wram is NULL in exactly this case, the same condition l_rd already guards on.
+static void room_is_nil_before_any_game_is_running(void) {
+  clear_mods();
+  const char *root = make_mod("roomnil", "id=roomnil\napi=1\ngames=ages,seasons\n",
+      "local r = oracles.room()\n"
+      "oracles.log('isnil=' .. tostring(r == nil))\n");
+  ASSERT(mods_init(root, true));           // main.lua's own top-level body runs before any frame
+  ASSERT(mods_enabled(0));
+  ASSERT(mods_last_log());
+  ASSERT(strstr(mods_last_log(), "isnil=true") != NULL);
+  mods_shutdown();
+
+  clear_mods();
+  const char *root2 = make_mod("roomnil2", "id=roomnil2\napi=1\ngames=ages,seasons\n",
+      "oracles.on_frame(function()\n"
+      "  local r = oracles.room()\n"
+      "  oracles.log('isnil=' .. tostring(r == nil))\n"
+      "end)\n");
+  ASSERT(mods_init(root2, true));
+  ModsFrame f = { .wram = NULL, .hram = NULL, .seasons = true, .width = 160, .room = 0 };
+  mods_frame(&f);                          // a live frame, but explicitly no game running yet
+  ASSERT(mods_enabled(0));
+  ASSERT(mods_last_log());
+  ASSERT(strstr(mods_last_log(), "isnil=true") != NULL);
+  mods_shutdown();
+}
+
+// Hostile input: oracles.room() takes no arguments, and passing extras must be ignored, not
+// crash and not error -- a deliberate decision (see l_room's own comment), pinned so a future
+// change that starts inspecting the stack (e.g. an added luaL_checktype) cannot silently start
+// rejecting calls that work today without a test noticing.
+static void oracles_room_ignores_extra_arguments(void) {
+  clear_mods();
+  const char *root = make_mod("roomargs", "id=roomargs\napi=1\ngames=ages,seasons\n",
+      "oracles.on_frame(function()\n"
+      "  local r = oracles.room(1, 'two', {3}, nil, true)\n"
+      "  oracles.log('room=' .. r.room)\n"
+      "end)\n");
+  ASSERT(mods_init(root, true));
+  static uint8_t wram[0x1000], hram[127];
+  ModsFrame f = {
+    .wram = wram, .hram = hram, .seasons = true, .width = 160, .room = 3,
+    .room_w = 20, .room_h = 16, .room_group = 1,
+  };
+  mods_frame(&f);
+  ASSERT(mods_enabled(0));
+  ASSERT(mods_last_log());
+  ASSERT(strstr(mods_last_log(), "room=3") != NULL);
+  mods_shutdown();
+}
+
 int main(void) {
   // The alarm handler's _exit(1) skips normal stdio teardown (deliberately: calling atexit
   // handlers or flushing from inside a signal handler is not safe), which means any buffered
@@ -4124,5 +4233,9 @@ int main(void) {
   RUN_SKIPPABLE(a_fifo_store_ini_does_not_hang);
   RUN(a_nul_byte_in_store_ini_makes_it_unreadable_and_unwritable);
   RUN(mods_frame_round_trips_wram3_and_room_geometry);
+  RUN(a_mod_sees_room_group_and_metatile_dimensions);
+  RUN(room_halves_an_odd_dimension_by_truncation);
+  RUN(room_is_nil_before_any_game_is_running);
+  RUN(oracles_room_ignores_extra_arguments);
   return skipped ? 77 : 0;
 }

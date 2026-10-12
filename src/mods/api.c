@@ -97,6 +97,50 @@ static int l_rd(lua_State *L) {
   return 1;
 }
 
+// Stage 3 Task 2: the current room, as a table { group, room, width, height }.
+//
+// width/height are in **metatiles**, not the 8x8 tiles room_w/room_h hold -- a metatile (one
+// bush, one wall, one stair) is the game's own unit of meaning and is what Task 3's
+// id-to-metatile mapping table will be keyed on, so this converts here rather than making every
+// caller divide by two itself and risk forgetting. The conversion is an exact halving
+// (room_w/room_h are always even -- the plan's verified-facts table observed 20x16 and 30x22,
+// both even, and wRoomWidth/wRoomHeight are themselves twice a metatile count by construction),
+// so plain integer division never silently drops an odd half-tile.
+//
+// Returns nil, not a table of zeroes, when no game is running. The three fields this reads --
+// room_w, room_h, room_group -- are only meaningful while f->wram is non-NULL (see ModsFrame's
+// own comment in mods.h: they default to plain 0 otherwise, the same convention `room` already
+// follows); a table of zeroes would repeat exactly the lie oracles.screen() told before Stage 1
+// fixed it, except that fix doesn't apply here. screen() could default sanely to 160 because 160
+// is never a *real* in-game width the launcher could confuse with; 0 is a perfectly plausible
+// room, group, width or height, so returning a table of zeroes here would be indistinguishable
+// from a real room 0 of width 0 -- an honest nil is the only answer that isn't a lie. f->wram is
+// the same guard l_rd uses to decide whether the bank-0 window is live, not an invented
+// condition of this binding's own.
+//
+// Takes no arguments; extra ones are silently ignored (ordinary Lua semantics for a C function
+// that never inspects lua_gettop/looks past the stack it needs) rather than rejected -- a
+// deliberate choice, not an oversight, since there is nothing hostile an extra argument to a
+// zero-argument accessor could do. See oracles_room_ignores_extra_arguments in test_mods.c for
+// the pinned behaviour.
+static int l_room(lua_State *L) {
+  const ModsFrame *f = mods_current_frame();
+  if (!f->wram) {
+    lua_pushnil(L);
+    return 1;
+  }
+  lua_createtable(L, 0, 4);
+  lua_pushinteger(L, f->room_group);
+  lua_setfield(L, -2, "group");
+  lua_pushinteger(L, f->room);
+  lua_setfield(L, -2, "room");
+  lua_pushinteger(L, f->room_w / 2);
+  lua_setfield(L, -2, "width");
+  lua_pushinteger(L, f->room_h / 2);
+  lua_setfield(L, -2, "height");
+  return 1;
+}
+
 static int l_draw_rect(lua_State *L) {
   overlay_rect(mods_overlay_mut(), check_int(L, 1), check_int(L, 2), check_int(L, 3),
                check_int(L, 4), check_int(L, 5));
@@ -285,6 +329,7 @@ static const luaL_Reg api[] = {
   {"on_frame", l_on_frame},
   {"on_room_change", l_on_room_change},
   {"rd", l_rd},
+  {"room", l_room},
   {"screen", l_screen},
   {"setting", l_setting},
   {"store", l_store},
