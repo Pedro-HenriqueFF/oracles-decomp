@@ -319,6 +319,7 @@ static char strings[32768];
 static size_t strings_used;
 
 Clay_String gui_str(const char *fmt, ...) {
+  if (strings_used >= sizeof strings) return (Clay_String){.length = 0, .chars = ""};
   va_list ap;
   va_start(ap, fmt);
   char *p = strings + strings_used;
@@ -326,7 +327,8 @@ Clay_String gui_str(const char *fmt, ...) {
   int n = vsnprintf(p, room, fmt, ap);
   va_end(ap);
   if (n < 0) n = 0;
-  if ((size_t)n >= room) n = room ? (int)room - 1 : 0;
+  if ((size_t)n >= room) n = (int)room - 1;
+  p[n] = 0;
   strings_used += (size_t)n + 1;
   return (Clay_String){.length = n, .chars = p};
 }
@@ -336,6 +338,11 @@ Clay_Color gui_rgba(UiColor c, uint8_t alpha) { return (Clay_Color){c.r, c.g, c.
 
 Clay_TextElementConfig *gui_text(float points, UiColor c) {
   return CLAY_TEXT_CONFIG({.textColor = gui_rgb(c), .fontSize = gui_px(points), .wrapMode = CLAY_TEXT_WRAP_WORDS});
+}
+
+uint16_t gui_text_width(const char *s, float points) {
+  Clay_Dimensions d = measure((Clay_StringSlice){.length = (int32_t)strlen(s), .chars = s}, &(Clay_TextElementConfig){.fontSize = gui_px(points)}, NULL);
+  return (uint16_t)ceilf(d.width);
 }
 
 float gui_scale(void) { return scale; }

@@ -48,7 +48,8 @@ int gui_code(CodeEntry *e, const GuiTheme *t, const GuiFrame *f) {
   gui_begin(page_scale(f));
   int tapped = GUI_NONE;
   PAGE(t, f) {
-    if (header(t, "Enter code", f->hints ? gui_str("Type it   %s back", f->back_key ? f->back_key : "Esc").chars : NULL)) tapped = GUI_BACK;
+    const char *hint = f->hints ? gui_str("Type it   %s back", hint_back(f)).chars : NULL;
+    if (header(t, "Enter code", hint)) tapped = GUI_BACK;
     paragraph(CLAY_STRING("Type the 16-digit code from your other device's Save sync page."), SMALL, t->paper, 8, 20);
     // four groups of four boxes, the one being typed into lit
     CLAY({.layout = {.sizing = {CLAY_SIZING_GROW(0)}, .layoutDirection = CLAY_TOP_TO_BOTTOM, .childGap = gui_px(12), .childAlignment = {.x = CLAY_ALIGN_X_CENTER},
