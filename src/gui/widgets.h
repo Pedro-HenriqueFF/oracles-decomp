@@ -80,10 +80,10 @@ bool header(const GuiTheme *t, const char *title, const char *hint);
 int tab_bar(const GuiTheme *t, const char *id, const char *const *labels, int n, int selected, bool focus);
 // The keyboard hint under a page, on keyboard screens only.
 void hint_line(const GuiTheme *t, const GuiFrame *f, const char *s);
-// "<ok> verb   <back> verb" with the frame's key names, e.g. hint_of(f, "change", "back").
 // What the hints call accept and back: the frame's names, or the keyboard's.
 const char *hint_ok(const GuiFrame *f);
 const char *hint_back(const GuiFrame *f);
+// "<ok> verb   <back> verb" with the frame's key names, e.g. hint_of(f, "change", "back").
 const char *hint_of(const GuiFrame *f, const char *ok_verb, const char *back_verb);
 // A paragraph inside a page's padding.
 void paragraph(Clay_String s, float points, UiColor c, float top, float bottom);

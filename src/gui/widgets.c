@@ -127,8 +127,7 @@ bool header(const GuiTheme *t, const char *title, const char *hint) {
   Clay_ElementId back = CLAY_ID("Back");
   bool tapped = gui_tapped(back);
   // the sides are the same width, so the title stays centred, and wide enough for the hint
-  uint16_t side = gui_px(150);
-  if (hint && gui_text_width(hint, TAG) > side) side = gui_text_width(hint, TAG);
+  uint16_t w = hint ? gui_text_width(hint, TAG) : 0, side = w > gui_px(150) ? w : gui_px(150);
   CLAY({.layout = {.sizing = {CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(gui_px(56))}, .childAlignment = {.y = CLAY_ALIGN_Y_CENTER}}}) {
     CLAY({.layout = {.sizing = {CLAY_SIZING_FIXED(side), CLAY_SIZING_FIXED(gui_px(ROW_H))}}}) {
       CLAY({.id = back, .layout = {.sizing = {CLAY_SIZING_FIT(0), CLAY_SIZING_GROW(0)}, .padding = {0, gui_px(12), 0, 0}, .childGap = gui_px(8),
