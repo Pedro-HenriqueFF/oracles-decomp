@@ -218,6 +218,33 @@ aren't printable text are shown as `\xNN` escapes rather than being sent to your
 over about 500 characters are cut, and logging on every single frame will flood the log — log when
 something changes.
 
+### `oracles.metatile(x, y)`
+
+Returns the metatile id (an integer 0-255) at metatile coordinates `(x, y)` in the current room, or
+`nil` if there is no such tile.
+
+```lua
+local r = oracles.room()
+if r then
+  local id = oracles.metatile(0, 0)   -- top-left metatile of the current room
+  if id then oracles.log("top-left metatile is " .. id) end
+end
+```
+
+`x` and `y` are metatile coordinates, the same unit `oracles.room()`'s `width`/`height` use — not
+pixels and not the 8x8 tiles the game's own `wRoomWidth`/`wRoomHeight` count in.
+
+**Returns `nil`, never a tile, for three different reasons, all collapsed into the same answer:**
+no game is running yet; `(x, y)` is negative or at/past `oracles.room()`'s `width`/`height`; or (not
+reachable with any room the game actually has, but checked anyway) the coordinate would fall
+outside the memory this id actually lives in. The room's own storage is laid out in a fixed-width
+row wider than most rooms are, so an `x` that looks plausible for a wide room can still be one
+column past a narrower one's real width — that column holds unused padding, not a tile, and this
+function could have handed it back as if it were one. It doesn't: a padding byte happens to look
+exactly like the legitimate id `0`, so returning it would be a value indistinguishable from a real
+tile and a mod would have no way to tell the two apart. `nil` is the only answer that isn't a lie,
+the same reasoning `oracles.room()` already follows for "no game running".
+
 ### `oracles.on_frame(f)`
 
 Registers `f` to be called once per drawn frame while you are playing. `f` takes no arguments.

@@ -141,6 +141,51 @@ static int l_room(lua_State *L) {
   return 1;
 }
 
+// Stage 3 Task 3: the metatile id at metatile coordinates (x, y) in the current room.
+//
+// wRoomLayout ($cf00, 0xc0 bytes, bank 0) is 16 bytes a row -- a fixed stride that does not
+// track the room's own width -- of which only the first room_w/2 columns of any given row are
+// meaningful; the rest is padding (`blank_data_around_collisions`, src/game/bank0.c:3467, writes
+// 0x00 there for columns past the room, which is exactly the ambiguity this binding exists to
+// avoid: a 0x00 id is a real, legal metatile, so handing back the padding byte for an
+// out-of-room query would be a value a mod cannot distinguish from a real tile with id 0).
+//
+// `x`/`y` come straight from Lua and are therefore hostile: check_int, not a bare
+// (int)luaL_checkinteger cast, so a 64-bit argument like 4294967296 (2^32) clamps to INT_MAX
+// instead of wrapping back around to 0 and silently addressing the wrong tile -- see check_int's
+// own comment for the draw_rect case this already fixed once.
+//
+// Returns nil, not the padding byte and not 0, for:
+//   - no game running (f->wram NULL, the same guard l_room and l_rd both use);
+//   - (x, y) outside the room's own room_w/2 by room_h/2 metatiles -- the documented, deliberate
+//     choice (see MODDING.md's oracles.metatile entry) over returning the ambiguous padding byte;
+//   - defensively, any (x, y) that would still land outside wRoomLayout's own 0xc0-byte region
+//     even after the room-bounds check above -- which cannot happen for any room_w/room_h the
+//     real game has ever produced (room_h/2 tops out at 11, so y*16+x tops out at 175, inside
+//     0xc0 == 192), but costs nothing to check and turns "a future room geometry no one has seen
+//     yet" into another nil rather than a read past the 0xc0 bytes this table actually occupies.
+static int l_metatile(lua_State *L) {
+  int x = check_int(L, 1);
+  int y = check_int(L, 2);
+  const ModsFrame *f = mods_current_frame();
+  if (!f->wram) {
+    lua_pushnil(L);
+    return 1;
+  }
+  int mw = f->room_w / 2, mh = f->room_h / 2;
+  if (x < 0 || y < 0 || x >= mw || y >= mh) {
+    lua_pushnil(L);
+    return 1;
+  }
+  int idx = y * 16 + x;
+  if (idx < 0 || idx >= 0xc0) {
+    lua_pushnil(L);
+    return 1;
+  }
+  lua_pushinteger(L, f->wram[0xf00 + idx]);
+  return 1;
+}
+
 static int l_draw_rect(lua_State *L) {
   overlay_rect(mods_overlay_mut(), check_int(L, 1), check_int(L, 2), check_int(L, 3),
                check_int(L, 4), check_int(L, 5));
@@ -326,6 +371,7 @@ static const luaL_Reg api[] = {
   {"game", l_game},
   {"load", l_load},
   {"log", l_log},
+  {"metatile", l_metatile},
   {"on_frame", l_on_frame},
   {"on_room_change", l_on_room_change},
   {"rd", l_rd},

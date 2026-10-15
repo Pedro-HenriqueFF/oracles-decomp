@@ -20,6 +20,18 @@ whole frame range (the opening of the game, confirmed by a WRAM dump at movie fr
 0 there) -- the two addresses agree by coincidence at every frame this test reaches, so no
 byte-content comparison here can tell a correct read from a swapped one.
 
+Stage 3 Task 3 extends the same mod once more to walk oracles.metatile(x, y) over every (x, y)
+inside the room's own width/height (in metatiles, i.e. the halved values oracles.room() already
+returns) on every on_room_change, comparing each one against oracles.rd(0xcf00 + y*16 + x) --
+the same $cf00 wRoomLayout address the plan's verified-facts table gives, read independently
+through the already-pinned oracles.rd rather than hardcoding any id, so this does not pin the
+test to one movie frame's specific layout. It also calls oracles.metatile(width, 0) -- one column
+past the room's own width, inside the 16-byte stride for any room up to 16 metatiles wide -- and
+checks that comes back nil rather than the padding byte wRoomLayout actually holds there, which
+is the live engine-loaded version of the same ambiguity test_mods.c's synthetic
+metatile_is_nil_past_the_rooms_width_not_just_the_stride already pins against a fabricated
+ModsFrame.
+
 KNOWN, DOCUMENTED GAP (not closed by this file): catching that specific mutation needs a frame
 where room group is actually non-zero. Driving this same movie's replay, by two different
 input-encoding strategies (OR-aggregating each FAST-mode tick's 4 real frames, and sampling only
@@ -119,13 +131,33 @@ with tempfile.TemporaryDirectory() as cache:
             "  local raw_h = oracles.rd(0xcd0b)\n"
             "  local ok = info ~= nil and info.room == r and info.group == raw_group\n"
             "             and info.width == raw_w // 2 and info.height == raw_h // 2\n"
+            "  -- Task 3: oracles.metatile(x, y) against the same $cf00 bytes read\n"
+            "  -- independently via oracles.rd, over every in-room (x, y) -- not a hardcoded id.\n"
+            "  local meta_ok = true\n"
+            "  local meta_nonzero = false\n"
+            "  if info ~= nil then\n"
+            "    for y = 0, info.height - 1 do\n"
+            "      for x = 0, info.width - 1 do\n"
+            "        local id = oracles.metatile(x, y)\n"
+            "        local raw = oracles.rd(0xcf00 + y * 16 + x)\n"
+            "        if id ~= raw then meta_ok = false end\n"
+            "        if raw ~= 0 then meta_nonzero = true end\n"
+            "      end\n"
+            "    end\n"
+            "  end\n"
+            "  -- One column past the room's own width, still inside the 16-byte stride: must be\n"
+            "  -- nil, not whatever padding byte wRoomLayout actually holds there.\n"
+            "  local oob_nil = info == nil or oracles.metatile(info.width, 0) == nil\n"
             "  oracles.log('roomwatch room=' .. r .. ' ok=' .. tostring(ok) ..\n"
             "              ' group=' .. (info and info.group or -1) ..\n"
             "              ' rawgroup=' .. raw_group ..\n"
             "              ' width=' .. (info and info.width or -1) ..\n"
             "              ' raww=' .. raw_w ..\n"
             "              ' height=' .. (info and info.height or -1) ..\n"
-            "              ' rawh=' .. raw_h)\n"
+            "              ' rawh=' .. raw_h ..\n"
+            "              ' metaok=' .. tostring(meta_ok) ..\n"
+            "              ' metanonzero=' .. tostring(meta_nonzero) ..\n"
+            "              ' oobnil=' .. tostring(oob_nil))\n"
             "end)\n")
 
     max_frames = NFRAMES + 40
@@ -162,4 +194,26 @@ with tempfile.TemporaryDirectory() as cache:
     # this test reaches.
     mismatches = [d for d in parsed if d['ok'] != 'true']
     assert not mismatches, f'oracles.room() disagreed with independently-read raw bytes: {mismatches}'
+
+    # Task 3's own non-vacuity guard, the same discipline as the width/height check above: at
+    # least one oracles.rd(0xcf00 + y*16 + x) read during this run must actually be non-zero, or
+    # the metaok comparison below could be trivially satisfied by both sides reading 0 for the
+    # whole room (e.g. a layout that is never populated at these frames, or an l_metatile that
+    # always returns 0/nil regardless of x/y).
+    assert any(d['metanonzero'] == 'true' for d in parsed), (
+        f'never observed a non-zero metatile id via oracles.rd(0xcf00+...); the '
+        f'oracles.metatile() comparison below would be vacuous. stderr:\n{r.stderr}')
+
+    # oracles.metatile(x, y) must agree with the same bytes read independently via oracles.rd,
+    # for every (x, y) in the room, at every on_room_change call.
+    meta_mismatches = [d for d in parsed if d['metaok'] != 'true']
+    assert not meta_mismatches, (
+        f'oracles.metatile() disagreed with independently-read raw bytes: {meta_mismatches}')
+
+    # One column past the room's own width must come back nil, not the padding byte wRoomLayout
+    # actually holds there -- the live-engine version of the ambiguity test_mods.c's synthetic
+    # metatile_is_nil_past_the_rooms_width_not_just_the_stride test already pins.
+    oob_failures = [d for d in parsed if d['oobnil'] != 'true']
+    assert not oob_failures, (
+        f'oracles.metatile(width, 0) was not nil for a real room: {oob_failures}')
 print('ok mods_room')

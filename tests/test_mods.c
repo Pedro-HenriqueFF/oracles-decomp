@@ -4070,6 +4070,168 @@ static void oracles_room_ignores_extra_arguments(void) {
   mods_shutdown();
 }
 
+// ---------------------------------------------------------------------------
+// Stage 3 Task 3: oracles.metatile(x, y).
+// ---------------------------------------------------------------------------
+
+// The ordinary path: a mod reads two different, individually-placed bytes out of the room's own
+// $cf00 layout table (row 0 col 3, and row 2 col 7) and gets back exactly those bytes -- pinning
+// the x/y -> $cf00 + y*16 + x address math l_metatile uses, not merely that *some* integer comes
+// back.
+static void a_mod_reads_the_metatile_id_at_known_coordinates(void) {
+  clear_mods();
+  const char *root = make_mod("metaknown", "id=metaknown\napi=1\ngames=ages,seasons\n",
+      "oracles.on_frame(function()\n"
+      "  oracles.log('a=' .. oracles.metatile(3, 0) .. ' b=' .. oracles.metatile(7, 2))\n"
+      "end)\n");
+  ASSERT(mods_init(root, true));
+  static uint8_t wram[0x1000], hram[127];
+  wram[0xf00 + 0 * 16 + 3] = 0x42;   // $cf00 row 0, col 3
+  wram[0xf00 + 2 * 16 + 7] = 0x99;   // $cf00 row 2, col 7
+  ModsFrame f = {
+    .wram = wram, .hram = hram, .seasons = true, .width = 160, .room = 1,
+    .room_w = 20, .room_h = 16, .room_group = 0,
+  };
+  mods_frame(&f);
+  ASSERT(mods_enabled(0));
+  ASSERT(mods_last_log());
+  ASSERT(strstr(mods_last_log(), "a=66 b=153") != NULL);
+  mods_shutdown();
+}
+
+// The row stride is 16 bytes regardless of the room's own width -- only the first room_w/2
+// columns of any row are real tiles; the rest is padding the game itself writes
+// (blank_data_around_collisions, src/game/bank0.c:3467). Column 12 in this 10-metatile-wide
+// (room_w=20) room sits squarely in that padding, and this test puts a *nonzero* byte there on
+// purpose: if l_metatile ever started indexing without the room-width check, it would read that
+// byte back and this test would see a number, not nil -- a zero byte at that address would let
+// the identical bug through silently, passing for the wrong reason. Also pins the exact boundary:
+// column 9 (room_w/2 - 1) is the last real tile, column 10 (room_w/2) is the first invalid one.
+static void metatile_is_nil_past_the_rooms_width_not_just_the_stride(void) {
+  clear_mods();
+  const char *root = make_mod("metapad", "id=metapad\napi=1\ngames=ages,seasons\n",
+      "oracles.on_frame(function()\n"
+      "  local last = oracles.metatile(9, 0)\n"       // last real column (room_w/2 - 1)
+      "  local pad = oracles.metatile(12, 0)\n"        // inside the 16-byte stride, past width
+      "  local first_bad = oracles.metatile(10, 0)\n"  // exactly room_w/2: first invalid column
+      "  oracles.log('last=' .. tostring(last) .. ' pad=' .. tostring(pad) ..\n"
+      "              ' first_bad=' .. tostring(first_bad))\n"
+      "end)\n");
+  ASSERT(mods_init(root, true));
+  static uint8_t wram[0x1000], hram[127];
+  wram[0xf00 + 9] = 0x05;     // the last real column: a real, legible tile
+  wram[0xf00 + 12] = 0x37;    // deliberately nonzero padding, to rule out a coincidental 0 match
+  ModsFrame f = {
+    .wram = wram, .hram = hram, .seasons = true, .width = 160, .room = 1,
+    .room_w = 20, .room_h = 16, .room_group = 0,
+  };
+  mods_frame(&f);
+  ASSERT(mods_enabled(0));
+  ASSERT(mods_last_log());
+  ASSERT(strstr(mods_last_log(), "last=5 pad=nil first_bad=nil") != NULL);
+  mods_shutdown();
+}
+
+// Out-of-room in every other direction too: negative x/y, and the same above/below-boundary pin
+// as the width test above, but for room_h/2 (the last real row is 7, the first invalid one is 8).
+static void metatile_is_nil_for_negative_and_overheight_coordinates(void) {
+  clear_mods();
+  const char *root = make_mod("metabounds", "id=metabounds\napi=1\ngames=ages,seasons\n",
+      "oracles.on_frame(function()\n"
+      "  local negx = oracles.metatile(-1, 0)\n"
+      "  local negy = oracles.metatile(0, -1)\n"
+      "  local lasty = oracles.metatile(0, 7)\n"      // last real row (room_h/2 - 1)
+      "  local toohigh = oracles.metatile(0, 8)\n"    // exactly room_h/2: first invalid row
+      "  oracles.log('negx=' .. tostring(negx) .. ' negy=' .. tostring(negy) ..\n"
+      "              ' lasty=' .. tostring(lasty) .. ' toohigh=' .. tostring(toohigh))\n"
+      "end)\n");
+  ASSERT(mods_init(root, true));
+  static uint8_t wram[0x1000], hram[127];
+  wram[0xf00 + 7 * 16] = 0x0c;
+  ModsFrame f = {
+    .wram = wram, .hram = hram, .seasons = true, .width = 160, .room = 1,
+    .room_w = 20, .room_h = 16, .room_group = 0,
+  };
+  mods_frame(&f);
+  ASSERT(mods_enabled(0));
+  ASSERT(mods_last_log());
+  ASSERT(strstr(mods_last_log(), "negx=nil negy=nil lasty=12 toohigh=nil") != NULL);
+  mods_shutdown();
+}
+
+// No game running yet (f->wram NULL): nil for even the most ordinary-looking coordinate,
+// matching oracles.room()'s own no-game guard (the same f->wram check) rather than inventing a
+// second convention for "no data" here.
+static void metatile_is_nil_before_any_game_is_running(void) {
+  clear_mods();
+  const char *root = make_mod("metanogame", "id=metanogame\napi=1\ngames=ages,seasons\n",
+      "oracles.on_frame(function()\n"
+      "  oracles.log('id=' .. tostring(oracles.metatile(0, 0)))\n"
+      "end)\n");
+  ASSERT(mods_init(root, true));
+  ModsFrame f = { .wram = NULL, .hram = NULL, .seasons = true, .width = 160, .room = 0 };
+  mods_frame(&f);
+  ASSERT(mods_enabled(0));
+  ASSERT(mods_last_log());
+  ASSERT(strstr(mods_last_log(), "id=nil") != NULL);
+  mods_shutdown();
+}
+
+// Correction: metatile_is_nil_before_any_game_is_running below (and the room_w/room_h defaults
+// it relies on) leaves a blind spot -- a ModsFrame built with .wram = NULL but .room_w/.room_h
+// left at 0 is nil only because 0/2 == 0 already fails the x < mw/y < mh bounds check, which
+// would still return nil even if the f->wram guard itself were deleted. This test closes that:
+// .room_w/.room_h are set to a normal room's values *alongside* a NULL wram, a combination the
+// real app never produces (ModsFrame's own comment says room_w/room_h are only meaningful while
+// wram is non-NULL) but a hostile or buggy caller could, so the explicit f->wram check -- not a
+// coincidental side effect of the bounds check -- is what must be relied on here.
+static void metatile_is_nil_when_wram_is_null_even_with_room_geometry_set(void) {
+  clear_mods();
+  const char *root = make_mod("metanowram", "id=metanowram\napi=1\ngames=ages,seasons\n",
+      "oracles.on_frame(function()\n"
+      "  oracles.log('id=' .. tostring(oracles.metatile(0, 0)))\n"
+      "end)\n");
+  ASSERT(mods_init(root, true));
+  ModsFrame f = {
+    .wram = NULL, .hram = NULL, .seasons = true, .width = 160, .room = 0,
+    .room_w = 20, .room_h = 16, .room_group = 0,
+  };
+  mods_frame(&f);
+  ASSERT(mods_enabled(0));
+  ASSERT(mods_last_log());
+  ASSERT(strstr(mods_last_log(), "id=nil") != NULL);
+  mods_shutdown();
+}
+
+// Hostile input: a 64-bit lua_Integer like 2^32 + 5 would truncate to plain 5 under a bare
+// (int)luaL_checkinteger cast -- a plausible, in-range column in this 10-metatile-wide room,
+// which would silently hand back a real tile's id for an argument that looks nothing like 5.
+// check_int clamps instead (to INT_MAX, which is always >= this room's width and so always out of
+// range), so this must come back nil, not whatever byte sits at column 5 -- set deliberately
+// nonzero here, so a reintroduced truncation bug would show up as a number, not coincide with
+// nil. Mirrors draw_rect_clamps_rather_than_wrapping_a_huge_width's own 2^32 + 5 literal.
+static void metatile_clamps_a_hostile_huge_coordinate_rather_than_wrapping(void) {
+  clear_mods();
+  const char *root = make_mod("metahuge", "id=metahuge\napi=1\ngames=ages,seasons\n",
+      "oracles.on_frame(function()\n"
+      "  local big = oracles.metatile(4294967296 + 5, 0)\n"
+      "  local neg = oracles.metatile(-4294967296 - 5, 0)\n"
+      "  oracles.log('big=' .. tostring(big) .. ' neg=' .. tostring(neg))\n"
+      "end)\n");
+  ASSERT(mods_init(root, true));
+  static uint8_t wram[0x1000], hram[127];
+  wram[0xf00 + 5] = 0x21;   // column 5: what a truncated 2^32+5 would wrongly read
+  ModsFrame f = {
+    .wram = wram, .hram = hram, .seasons = true, .width = 160, .room = 1,
+    .room_w = 20, .room_h = 16, .room_group = 0,
+  };
+  mods_frame(&f);
+  ASSERT(mods_enabled(0));
+  ASSERT(mods_last_log());
+  ASSERT(strstr(mods_last_log(), "big=nil neg=nil") != NULL);
+  mods_shutdown();
+}
+
 int main(void) {
   // The alarm handler's _exit(1) skips normal stdio teardown (deliberately: calling atexit
   // handlers or flushing from inside a signal handler is not safe), which means any buffered
@@ -4241,5 +4403,11 @@ int main(void) {
   RUN(room_halves_an_odd_dimension_by_truncation);
   RUN(room_is_nil_before_any_game_is_running);
   RUN(oracles_room_ignores_extra_arguments);
+  RUN(a_mod_reads_the_metatile_id_at_known_coordinates);
+  RUN(metatile_is_nil_past_the_rooms_width_not_just_the_stride);
+  RUN(metatile_is_nil_for_negative_and_overheight_coordinates);
+  RUN(metatile_is_nil_before_any_game_is_running);
+  RUN(metatile_is_nil_when_wram_is_null_even_with_room_geometry_set);
+  RUN(metatile_clamps_a_hostile_huge_coordinate_rather_than_wrapping);
   return skipped ? 77 : 0;
 }
