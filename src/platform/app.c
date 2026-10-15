@@ -40,6 +40,8 @@
 #define ON_PHONE false
 #endif
 #include "wide/wide.h"
+#include "wide/hud.h"
+#include "ui/labels.h"
 #include "mods/mods.h"
 #include <stdio.h>
 #include <time.h>
@@ -125,6 +127,22 @@ static bool cached(const char *cache, const char *game) {
 
 static Settings settings;
 
+// The device that sent the last input decides what the screen calls the buttons (touch_on covers
+// touch), and the last pad's type what Auto means.
+static bool touch_on, pad_last;
+static PadStyle pad_seen = STYLE_AUTO;
+
+static PadStyle style_of_pad(SDL_JoystickID id) {
+  switch (SDL_GetGamepadTypeForID(id)) {
+  case SDL_GAMEPAD_TYPE_PS3: case SDL_GAMEPAD_TYPE_PS4: case SDL_GAMEPAD_TYPE_PS5: return STYLE_PLAYSTATION;
+  case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO: case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT:
+  case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT: case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR: return STYLE_NINTENDO;
+  default: return STYLE_XBOX;
+  }
+}
+static InputDevice input_device(void) { return touch_on ? DEVICE_TOUCH : pad_last ? DEVICE_PAD : DEVICE_KEYBOARD; }
+static PadStyle pad_style(void) { return pad_style_resolve(settings.pad_style, pad_seen); }
+
 static uint8_t joy_of(Action a) {
   static const uint8_t bits[ACTIONS] = {JOY_UP, JOY_DOWN, JOY_LEFT, JOY_RIGHT, JOY_A, JOY_B, JOY_START, JOY_SELECT, 0, 0, 0, 0, 0};
   return a < ACTIONS ? bits[a] : 0;
@@ -139,6 +157,8 @@ static const char *key_name(int sc) {
 }
 static const char *pad_name(int button) {
   static char buf[32];
+  const char *styled = pad_style_name(pad_style(), button);
+  if (styled) return styled;
   if (button == PAD_RIGHT_TRIGGER) return "RT";
   if (button == PAD_LEFT_TRIGGER) return "LT";
   const char *s = SDL_GetGamepadStringForButton((SDL_GamepadButton)button);
@@ -400,7 +420,7 @@ static void item_button(GB *gb, const char *dir, int slot, bool down) {
 #define TEST_TOUCH_ID 0x7e57
 #define FINGERS 10
 static TouchLayout layout;
-static bool touch_on, touch_mouse;
+static bool touch_mouse;
 static uint32_t touch_held, touch_pressed, touch_released;
 static struct { SDL_FingerID id; uint32_t held; bool down; } fingers[FINGERS];
 static UiTheme overlay_theme;            // the game's title-screen colours, behind widescreen's sides
@@ -485,6 +505,12 @@ static bool poll_event(SDL_Event *ev) {
   if ((!finger || direct_touch(ev->tfinger.touchID)) && gui_event(ev, touch_mouse) && touch_on) {
     menu_finger = ev->tfinger.fingerID;
     menu_finger_down = true;
+  }
+  if (ev->type == SDL_EVENT_KEY_DOWN && ev->key.scancode != SDL_SCANCODE_AC_BACK) pad_last = false;
+  else if (ev->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) { pad_last = true; pad_seen = style_of_pad(ev->gbutton.which); }
+  else if (ev->type == SDL_EVENT_GAMEPAD_AXIS_MOTION && (ev->gaxis.value > 16000 || ev->gaxis.value < -16000)) {
+    pad_last = true;
+    pad_seen = style_of_pad(ev->gaxis.which);
   }
   touch_event(ev);
   stick_event(ev);
@@ -581,6 +607,7 @@ static void present_frame(SDL_Renderer *ren, const uint8_t *rgb, int pic_w) {
   if (ui_layer || toast_on || waiting) {
     GuiFrame f = {{(float)layout.game_px.x, (float)layout.game_px.y, (float)layout.game_px.w, (float)layout.game_px.h},
                   {(float)safe.x, (float)safe.y, (float)safe.w, (float)safe.h}, (float)w, (float)h, !touch_on, NULL, NULL};
+    menu_hint_keys(input_device(), pad_style(), &f.ok_key, &f.back_key);
     if (ui_layer) ui_layer(&f);
     else gui_begin(gui_display_scale());
     if (waiting) gui_wait(waiting, SDL_GetTicks(), &gui_t, &f);
@@ -611,6 +638,12 @@ static int rd_room(const GBSample *sample, bool seasons) {
   return sample->wram[0][seasons ? 0xc4c : 0xc30];
 }
 
+static void hud_glyphs(uint8_t g[4]) {
+  InputDevice d = input_device();
+  PadStyle style = pad_style();
+  for (int i = 0; i < HUD_SLOTS; i++) g[i] = hud_slot_glyph(d, style, &settings.bindings, (HudSlot)i);
+}
+
 // A game frame: in widescreen the room around the camera fills the sides (the message stays centred).
 static void present_game(SDL_Renderer *ren, SDL_Texture *tex, const GBSample *sample, const uint8_t *rgb, bool seasons, const uint8_t *rom, size_t rom_size) {
   // Mods draw before the filters, so an overlay scales with the picture and takes the chosen
@@ -625,6 +658,9 @@ static void present_game(SDL_Renderer *ren, SDL_Texture *tex, const GBSample *sa
 
   if (!settings.widescreen) {
     uint8_t *pic = (uint8_t *)rgb;
+    uint8_t g[4];
+    hud_glyphs(g);
+    hud_relabel(sample, g[HUD_B], g[HUD_A], pic);
     for (int y = 0; y < FB_H; y++)
       for (int x = 0; x < ov->width; x++)
         if (overlay_cover_at(ov, x, y)) memcpy(pic + ((size_t)y * ov->width + x) * 3, overlay_rgb_at(ov, x, y), 3);
@@ -635,7 +671,8 @@ static void present_game(SDL_Renderer *ren, SDL_Texture *tex, const GBSample *sa
   // The X and Y items go in the space widescreen adds beside the status bar; the game has nowhere to
   // put them, so without the wider picture there is no room to show them in.
   WideOptions o = {seasons, settings.dim_sides, {overlay_theme.bg.r, overlay_theme.bg.g, overlay_theme.bg.b}, rom, rom_size,
-                   settings.four_slots, {features.slot_item[0], features.slot_item[1]}};
+                   settings.four_slots, {features.slot_item[0], features.slot_item[1]}, {0}};
+  hud_glyphs(o.glyph);
   wide_render(sample, &o, wide);
   for (int y = 0; y < FB_H; y++)
     for (int x = 0; x < ov->width; x++)
