@@ -1,5 +1,6 @@
 #include "wide/hud.h"
 #include "wide/wide.h"
+#include "wide/put555.h"
 #include "ui/labels.h"
 #include <stdbool.h>
 #include <string.h>
@@ -68,12 +69,6 @@ static const uint8_t tile_a[16] = {0x00, 0xff, 0x33, 0xff, 0x4a, 0xff, 0x4a, 0xf
 // The bar's tile data is signed ($9000 for tile 0); both tiles are below $80, so no wrap to $8800.
 enum { TILE_B = 0x05, TILE_A = 0x08, TILE_BASE = 0x1000, BAR_LINES = 16, CELL_W = 6 };
 
-// framebuffer_to_rgb's conversion, so a repainted pixel is the game's own of that colour
-static void put555(uint8_t *out, int c) {
-  int r = c & 31, g = (c >> 5) & 31, b = (c >> 10) & 31;
-  out[0] = (uint8_t)((r << 3) | (r >> 2)); out[1] = (uint8_t)((g << 3) | (g >> 2)); out[2] = (uint8_t)((b << 3) | (b >> 2));
-}
-
 void hud_relabel(const GBSample *s, uint8_t b, uint8_t a, uint8_t *rgb) {
   const uint8_t *gb = b == 'B' ? NULL : hud_glyph(b), *ga = a == 'A' ? NULL : hud_glyph(a);
   if (!gb && !ga) return;
@@ -82,6 +77,7 @@ void hud_relabel(const GBSample *s, uint8_t b, uint8_t a, uint8_t *rgb) {
     // the bar: LCD and BG on, map $9C00, signed tile data
     if ((lcdc & 0x89) != 0x89 || (lcdc & 0x10)) continue;
     int d = s->line_drawn[y] & 1, my = (y + s->line_scy[y]) & 0xff, fy = my & 7;
+    int window = wide_window_left(s, y);
     const uint8_t *v0 = s->drawn_vram[d][0], *v1 = s->drawn_vram[d][1];
     // one more cell than fits when SCX is not a multiple of 8: both ends are part cells
     for (int col = 0; col <= FB_W / 8; col++) {
@@ -97,10 +93,11 @@ void hud_relabel(const GBSample *s, uint8_t b, uint8_t a, uint8_t *rgb) {
       bool flip = attr & 0x20;
       int x0 = col * 8 - (scx & 7) + (flip ? 2 : 0);
       uint8_t bits = fy >= 1 && fy <= HUD_GLYPH_H ? g[fy - 1] : 0;
+      // the bar puts no sprite over its letters, so the cell is all background
       for (int x = 0; x < CELL_W; x++) {
         int sx = x0 + x;
-        if (sx < 0 || sx >= FB_W || wide_window_at(s, sx, y)) continue;  // the window covers the map
-        put555(rgb + ((size_t)y * FB_W + sx) * 3, (bits >> (7 - x)) & 1 ? ink : paper);
+        if (sx < 0 || sx >= FB_W || sx >= window) continue;
+        put555(rgb + ((size_t)y * FB_W + sx) * 3, (bits >> (7 - x)) & 1 ? ink : paper, false);
       }
     }
   }

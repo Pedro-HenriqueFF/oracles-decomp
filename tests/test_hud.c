@@ -6,6 +6,7 @@
 #include "wide/hud.h"
 #include "ui/labels.h"
 
+// hud.c has the same bytes; this copy is deliberately separate, so a typo in one is caught by the other
 static const uint8_t tile_b[16] = {0x00, 0xff, 0x73, 0xff, 0x4a, 0xff, 0x4a, 0xff, 0x72, 0xff, 0x4a, 0xff, 0x4a, 0xff, 0x72, 0xff};
 static const uint8_t tile_a[16] = {0x00, 0xff, 0x33, 0xff, 0x4a, 0xff, 0x4a, 0xff, 0x7a, 0xff, 0x4a, 0xff, 0x4a, 0xff, 0x4a, 0xff};
 static GBSample s;
@@ -31,11 +32,14 @@ static void make_bar(int col_a, uint8_t attr_a) {
 static int px(int x, int y) { return rgb[((size_t)y * FB_W + x) * 3]; }
 static bool same(int x, int y) { size_t i = ((size_t)y * FB_W + x) * 3; return !memcmp(rgb + i, before + i, 3); }
 
-// cell x0..x0+5 on lines 0-7 holds glyph g: row 0 paper, rows 1-7 the glyph
-static void assert_glyph(int x0, const uint8_t *g) {
+// cell x0..x0+5 on lines 0-7 holds glyph g in paper and ink (red channel): row 0 paper, rows 1-7
+// the glyph; columns off the left edge are skipped
+static void assert_glyph_in(int x0, const uint8_t *g, int paper, int ink) {
   for (int y = 0; y < 8; y++)
-    for (int c = 0; c < 6; c++) ASSERT_EQ(px(x0 + c, y), y && (g[y - 1] >> (7 - c)) & 1 ? INK : PAPER);
+    for (int c = 0; c < 6; c++)
+      if (x0 + c >= 0) ASSERT_EQ(px(x0 + c, y), y && (g[y - 1] >> (7 - c)) & 1 ? ink : paper);
 }
+static void assert_glyph(int x0, const uint8_t *g) { assert_glyph_in(x0, g, PAPER, INK); }
 
 static void glyphs_exist_for_every_code(void) {
   for (int c = 'A'; c <= 'Z'; c++) ASSERT(hud_glyph((uint8_t)c));
@@ -115,6 +119,49 @@ static void off_the_bar_is_left_alone(void) {
   ASSERT(!memcmp(before, rgb, sizeof rgb));
 }
 
+static void scrolled_bar_shifts_the_cells(void) {
+  make_bar(5, 0x80);
+  for (int y = 0; y < 16; y++) s.line_scx[y] = 3;
+  memcpy(before, rgb, sizeof rgb);
+  hud_relabel(&s, 'X', HUD_GLYPH_CROSS, rgb);
+  assert_glyph(-3, hud_glyph('X'));                    // B's cell clipped at the left edge
+  assert_glyph(37, hud_glyph(HUD_GLYPH_CROSS));
+  for (int y = 0; y < 8; y++) ASSERT(same(3, y) && same(4, y) && same(36, y) && same(43, y));
+}
+
+// The PPU drew these lines from the second copy (line_drawn 1): the first holds nothing
+static void second_drawn_copy_is_read(void) {
+  make_bar(5, 0x80);
+  memcpy(s.drawn_vram[1], s.drawn_vram[0], sizeof s.drawn_vram[1]);
+  memcpy(s.drawn_bg_pal[1], s.drawn_bg_pal[0], sizeof s.drawn_bg_pal[1]);
+  memset(s.drawn_vram[0], 0, sizeof s.drawn_vram[0]);
+  memset(s.drawn_bg_pal[0], 0, sizeof s.drawn_bg_pal[0]);
+  for (int y = 0; y < 16; y++) s.line_drawn[y] = 1;
+  hud_relabel(&s, 'X', 'Y', rgb);
+  assert_glyph(0, hud_glyph('X'));
+  assert_glyph(40, hud_glyph('Y'));
+}
+
+static void cell_palette_is_its_own(void) {
+  make_bar(5, 0x83);                                   // A in BG palette 3
+  uint8_t *pal = s.drawn_bg_pal[0] + 3 * 8;
+  pal[4] = 0x00; pal[5] = 0x7c;                        // paper blue: red 0
+  pal[6] = 0x1f; pal[7] = 0x00;                        // ink red: red 255
+  hud_relabel(&s, 'X', 'Y', rgb);
+  assert_glyph(0, hud_glyph('X'));
+  assert_glyph_in(40, hud_glyph('Y'), 0, 0xff);
+}
+
+static void bank1_and_upside_down_cells_are_left_alone(void) {
+  static const uint8_t attrs[] = {0x88, 0xc0};          // tile from VRAM bank 1; flipped vertically
+  for (size_t i = 0; i < sizeof attrs; i++) {
+    make_bar(5, attrs[i]);
+    memcpy(before, rgb, sizeof rgb);
+    hud_relabel(&s, 0, 'Y', rgb);
+    ASSERT(!memcmp(before, rgb, sizeof rgb));
+  }
+}
+
 int main(void) {
   RUN(glyphs_exist_for_every_code);
   RUN(glyphs_leave_the_bracket_alone);
@@ -124,5 +171,9 @@ int main(void) {
   RUN(mirrored_a_keeps_its_glyph_the_right_way_round);
   RUN(other_art_in_the_tiles_is_left_alone);
   RUN(off_the_bar_is_left_alone);
+  RUN(scrolled_bar_shifts_the_cells);
+  RUN(second_drawn_copy_is_read);
+  RUN(cell_palette_is_its_own);
+  RUN(bank1_and_upside_down_cells_are_left_alone);
   return 0;
 }

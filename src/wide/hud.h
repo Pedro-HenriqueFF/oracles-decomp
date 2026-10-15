@@ -6,8 +6,8 @@
 #include <stdint.h>
 
 #define HUD_GLYPH_H 7
-// Seven rows of a 4x7 cell glyph, bit 0x80 >> x for column x (letters in x 1-4, as the bar draws
-// them; shapes may use x 0-5). NULL for a code with no glyph.
+// Seven rows of a glyph up to 6 wide (x 0-5), bit 0x80 >> x for column x: letters in x 1-4, as the
+// bar draws them, shapes in x 1-5. NULL for a code with no glyph.
 const uint8_t *hud_glyph(uint8_t code);
 // Repaints the game's B and A letters in rgb (FB_W x FB_H RGB24, the sample's own picture) with
 // glyphs b and a. A code of 0, or the letter itself, leaves that one alone.

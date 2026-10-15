@@ -29,7 +29,7 @@ typedef struct {
 
 static bool under_sprite(const GBSample *s, int x, int y) {
   int h = (s->line_lcdc[y] & 0x04) ? 16 : 8;
-  const uint8_t *oam = s->drawn_oam[s->line_drawn[y]];
+  const uint8_t *oam = s->drawn_oam[s->line_drawn[y] & 1];
   for (int i = 0; i < 40; i++) {
     int sy = oam[i * 4] - 16, sx = oam[i * 4 + 1] - 8;
     if (x >= sx && x < sx + 8 && y >= sy && y < sy + h) return true;

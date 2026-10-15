@@ -26,4 +26,7 @@ void wide_render(const GBSample *s, const WideOptions *o, uint8_t *out);
 // The room's background pixel (RGB555) at screen (x, y), x from -48 to 207, or -1 where the room is
 // not shown there. Inside 0-159 it matches the PPU's background wherever no sprite covers it.
 int wide_room_pixel(const GBSample *s, bool seasons, int x, int y);
+// The first screen x the window layer covers on line y (it starts at WX - 7 and runs to the right
+// edge), INT_MAX when it is off.
+int wide_window_left(const GBSample *s, int y);
 bool wide_window_at(const GBSample *s, int x, int y);

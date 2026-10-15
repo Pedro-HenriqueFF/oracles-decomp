@@ -121,6 +121,8 @@ set_target_properties(oraclesui PROPERTIES LINKER_LANGUAGE CXX)
 # pulls in framebuffer_to_rgb (and so the engine). Do not merge this back into oracleswide.
 add_library(oraclesitem STATIC src/wide/item.c)
 target_include_directories(oraclesitem PUBLIC src)
+# hud.c calls wide_window_left, so it pulls in the engine too; split it out like oraclesitem if mods
+# or ui ever need hud_glyph.
 add_library(oracleswide STATIC src/wide/wide.c src/wide/room.c src/wide/hud.c)
 target_include_directories(oracleswide PUBLIC src)
 target_link_libraries(oracleswide PUBLIC oraclesitem)

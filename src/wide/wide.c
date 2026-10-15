@@ -1,7 +1,9 @@
 #include "wide/wide.h"
 #include "wide/item.h"
 #include "wide/room.h"
+#include "wide/put555.h"
 #include "hw/render.h"
+#include <limits.h>
 #include <string.h>
 
 // The RAM the renderer reads (the same address in both games unless two are given)
@@ -65,7 +67,7 @@ static int wrap_offset(int v) { v &= 0xff; return v > 200 ? v - 256 : v; }
 // and map, so VRAM-only changes (text, door animations) show exactly as in the middle. RGB555.
 static int bg_pixel(const GBSample *s, int x, int y) {
   uint8_t lcdc = s->line_lcdc[y];
-  int d = s->line_drawn[y];
+  int d = s->line_drawn[y] & 1;
   int px = (x + s->line_scx[y]) & 0xff, py = (y + s->line_scy[y]) & 0xff;
   int idx = ((lcdc & 0x08) ? 0x1c00 : 0x1800) + (py >> 3) * 32 + (px >> 3);
   uint8_t tile = s->drawn_vram[d][0][idx], attr = s->drawn_vram[d][1][idx];
@@ -79,17 +81,12 @@ static int bg_pixel(const GBSample *s, int x, int y) {
   return s->drawn_bg_pal[d][i] | (s->drawn_bg_pal[d][i + 1] << 8);
 }
 
-static void put555(uint8_t *out, int c, bool dim) {
-  int r = c & 31, g = (c >> 5) & 31, b = (c >> 10) & 31;
-  uint8_t rgb[3] = {(uint8_t)((r << 3) | (r >> 2)), (uint8_t)((g << 3) | (g >> 2)), (uint8_t)((b << 3) | (b >> 2))};
-  for (int k = 0; k < 3; k++) out[k] = dim ? (uint8_t)(rgb[k] * 3 / 4) : rgb[k];
+int wide_window_left(const GBSample *s, int y) {
+  uint8_t lcdc = s->line_lcdc[y];
+  return (lcdc & 0x20) && y >= s->line_wy[y] && s->line_wx[y] <= 166 ? s->line_wx[y] - 7 : INT_MAX;
 }
 
-// The window layer covers screen x on line y (it starts at WX - 7 and runs to the right edge)
-bool wide_window_at(const GBSample *s, int x, int y) {
-  uint8_t lcdc = s->line_lcdc[y];
-  return (lcdc & 0x20) && y >= s->line_wy[y] && s->line_wx[y] <= 166 && x + 7 >= s->line_wx[y];
-}
+bool wide_window_at(const GBSample *s, int x, int y) { return x >= wide_window_left(s, y); }
 
 enum { NOTHING = -1, OUTSIDE = -2 };
 
@@ -202,7 +199,7 @@ static const uint8_t gba_curve[32] = {
 static void learn_curve(const GBSample *s, int line, uint8_t curve[3][32]) {
   bool gba = s->hram[0xff96 - 0xff80] == 0xff, exact = true;
   bool known[3][32] = {{0}};
-  const uint8_t *drawn = s->drawn_bg_pal[s->line_drawn[line]], *stored = &s->wram[2][0xe80];
+  const uint8_t *drawn = s->drawn_bg_pal[s->line_drawn[line] & 1], *stored = &s->wram[2][0xe80];
   for (int i = 0; i < 64; i += 2) {
     int from = stored[i] | stored[i + 1] << 8, to = drawn[i] | drawn[i + 1] << 8;
     for (int c = 0; c < 3; c++) {
@@ -234,7 +231,7 @@ static void learn_curve(const GBSample *s, int line, uint8_t curve[3][32]) {
 static int neighbour_pixel(const GBSample *s, const Neighbour *n, int nx, int ny, int y) {
   const WideRoom *w = n->room;
   if (nx < 0 || ny < 0 || nx >= w->width * 8 || ny >= w->height * 8) return NOTHING;
-  int k = (ny >> 3) * 32 + (nx >> 3), d = s->line_drawn[y];
+  int k = (ny >> 3) * 32 + (nx >> 3), d = s->line_drawn[y] & 1;
   uint8_t tile = w->tiles[k], attr = w->attrs[k];
   int fx = nx & 7, fy = ny & 7, bank = (attr >> 3) & 1, addr = (tile < 0x80 ? 0x1000 : 0) + tile * 16;
   if (attr & 0x20) fx = 7 - fx;
@@ -317,7 +314,7 @@ static void slot_icons(const GBSample *s, const WideOptions *o, SlotIcons *si) {
 static void draw_slot_icons(const GBSample *s, const SlotIcons *si, int y, uint8_t *row) {
   if (!si->show || y >= 16) return;                     // an icon is as tall as the status bar
   // The letters sit in the middle of the bar's height, in the colour the game writes its own text in.
-  const uint8_t *bg = s->drawn_bg_pal[s->line_drawn[y]];
+  const uint8_t *bg = s->drawn_bg_pal[s->line_drawn[y] & 1];
   int ink = bg[3 * 2] | (bg[3 * 2 + 1] << 8);           // BG palette 0, colour 3
   for (int i = 0; i < 2; i++) {
     int base = SLOT_LEFT + i * SLOT_PITCH;
