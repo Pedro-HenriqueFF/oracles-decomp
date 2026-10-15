@@ -44,7 +44,7 @@ static void check_cb(GB *gb, const GBSample *s, void *ctx) {
     static uint8_t wide[WIDE_W * FB_H * 3];
     static double total, worst;
     static int n;
-    WideOptions o = {c->seasons, true, {40, 32, 16}, c->rom, c->rom_size, false, {0, 0}};
+    WideOptions o = {c->seasons, true, {40, 32, 16}, c->rom, c->rom_size, false, {0, 0}, {0}};
     struct timespec t0, t1;
     clock_gettime(CLOCK_MONOTONIC, &t0);
     wide_render(s, &o, wide);
@@ -59,7 +59,7 @@ static void check_cb(GB *gb, const GBSample *s, void *ctx) {
   char path[400];
   if (png && sscanf(png, "%llu:%399s", &at, path) == 2 && s->frame >= at && !c->saved) {
     static uint8_t wide[WIDE_W * FB_H * 3];
-    WideOptions o = {c->seasons, true, {40, 32, 16}, c->rom, c->rom_size, false, {0, 0}};
+    WideOptions o = {c->seasons, true, {40, 32, 16}, c->rom, c->rom_size, false, {0, 0}, {0}};
     wide_render(s, &o, wide);
     char full[440];
     snprintf(full, sizeof full, "%s-%s.png", path, c->seasons ? "seasons" : "ages");
@@ -138,7 +138,7 @@ static void neighbour_cb(GB *gb, const GBSample *s, void *ctx) {
   RoomView *v = &c->views[c->n++];
   v->group = group; v->room = room; v->modifier = modifier; v->have_view = true;
   static uint8_t wide[WIDE_W * FB_H * 3];
-  WideOptions o = {c->seasons, false, {1, 2, 3}, c->rom, c->rom_size, false, {0, 0}};
+  WideOptions o = {c->seasons, false, {1, 2, 3}, c->rom, c->rom_size, false, {0, 0}, {0}};
   wide_render(s, &o, wide);
   for (int y = 0; y < FB_H; y++)
     for (int x = 0; x < WIDE_SIDE; x++)

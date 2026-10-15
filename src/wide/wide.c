@@ -1,6 +1,7 @@
 #include "wide/wide.h"
 #include "wide/item.h"
 #include "wide/room.h"
+#include "wide/hud.h"
 #include "wide/put555.h"
 #include "hw/render.h"
 #include <limits.h>
@@ -289,14 +290,7 @@ enum { HUD_SHIFT = 30, SLOT_LEFT = 2, SLOT_PITCH = 38,
        SLOT_OPEN = 6, SLOT_ICON = 10, SLOT_CLOSE = 28, SLOT_BOX_W = 16,
        SLOT_TOP = 1, SLOT_BOTTOM = 14 };
 
-// 'X' and 'Y' in the status bar's own lettering: four pixels wide and seven tall, a pixel in from
-// the left of the cell, which is how the bar draws its B and A. The small bar font has no letters
-// past those, so these follow the shapes the ROM's larger font uses.
-enum { SLOT_LETTER_TOP = 1, SLOT_LETTER_H = 7 };
-static const uint8_t slot_letter[2][SLOT_LETTER_H] = {
-  {0x48, 0x48, 0x30, 0x30, 0x30, 0x48, 0x48},         // X
-  {0x48, 0x48, 0x30, 0x30, 0x30, 0x30, 0x30},         // Y
-};
+enum { SLOT_LETTER_TOP = 1 };
 
 typedef struct { bool show; bool on[2]; WideItemIcon icon[2]; int x[2]; } SlotIcons;
 
@@ -311,16 +305,18 @@ static void slot_icons(const GBSample *s, const WideOptions *o, SlotIcons *si) {
   }
 }
 
-static void draw_slot_icons(const GBSample *s, const SlotIcons *si, int y, uint8_t *row) {
+static void draw_slot_icons(const GBSample *s, const WideOptions *o, const SlotIcons *si, int y, uint8_t *row) {
   if (!si->show || y >= 16) return;                     // an icon is as tall as the status bar
   // The letters sit in the middle of the bar's height, in the colour the game writes its own text in.
   const uint8_t *bg = s->drawn_bg_pal[s->line_drawn[y] & 1];
   int ink = bg[3 * 2] | (bg[3 * 2 + 1] << 8);           // BG palette 0, colour 3
   for (int i = 0; i < 2; i++) {
     int base = SLOT_LEFT + i * SLOT_PITCH;
-    if (y >= SLOT_LETTER_TOP && y < SLOT_LETTER_TOP + SLOT_LETTER_H) {
-      uint8_t bits = slot_letter[i][y - SLOT_LETTER_TOP];
-      for (int x = 0; x < 8; x++)
+    if (y >= SLOT_LETTER_TOP && y < SLOT_LETTER_TOP + HUD_GLYPH_H) {
+      const uint8_t *g = hud_glyph(o->glyph[i]);
+      if (!g) g = hud_glyph(i ? 'Y' : 'X');
+      uint8_t bits = g[y - SLOT_LETTER_TOP];
+      for (int x = 0; x < 6; x++)
         if (bits & (0x80 >> x)) put555(row + (base + x) * 3, ink, false);
     }
     if (y >= SLOT_TOP && y <= SLOT_BOTTOM) {
@@ -382,6 +378,7 @@ void wide_render(const GBSample *s, const WideOptions *o, uint8_t *out) {
   static uint8_t middle[FB_W * FB_H * 3];
   static Around a;
   framebuffer_to_rgb(s->framebuffer, middle);
+  hud_relabel(s, o->glyph[2], o->glyph[3], middle);
   const GameRam *r = o->seasons ? &seasons_ram : &ages_ram;
   memset(a.resolved, 0, sizeof a.resolved);
   a.s = s;
@@ -429,7 +426,7 @@ void wide_render(const GBSample *s, const WideOptions *o, uint8_t *out) {
       for (int x = 0; x < bar; x++) memcpy(row + x * 3, mid, 3);
       for (int x = bar + FB_W; x < WIDE_W; x++) memcpy(row + x * 3, mid + (FB_W - 1) * 3, 3);
       memcpy(row + (size_t)bar * 3, mid, FB_W * 3);
-      draw_slot_icons(s, &icons, y, row);
+      draw_slot_icons(s, o, &icons, y, row);
       continue;
     }
     bool line = rooms && y >= STATUS_BAR_LINES && (s->line_lcdc[y] & 0x81) == 0x81 && !wide_window_at(s, 0, y);

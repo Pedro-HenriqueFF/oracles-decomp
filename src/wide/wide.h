@@ -19,6 +19,7 @@ typedef struct {
   size_t rom_size;
   bool slots;                   // 4 slots is on: the X and Y boxes take the left of the status bar
   uint8_t slot_item[2];         // what is on each of them (0: the box is empty)
+  uint8_t glyph[4];             // the four slots' letters, X Y B A (ui/labels.h codes; 0: the game's own)
 } WideOptions;
 
 // out: WIDE_W x FB_H RGB24.
