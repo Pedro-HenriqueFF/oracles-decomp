@@ -331,6 +331,18 @@ int main(int argc, char **argv) {
       if (!oracles_save_boot_state(gb, "/tmp/oracles-reload.state") || !oracles_load_boot_state(gb, "/tmp/oracles-reload.state")) return 2;
       fibers_reset(gb);
     }
+    if (getenv("POKE")) {
+      // POKE="frame:addr=val,addr=val;frame:..." writes WRAM (bank 0/1) before that frame
+      for (const char *q = getenv("POKE"); q && *q; q = strchr(q, ';') ? strchr(q, ';') + 1 : NULL) {
+        unsigned long long at = strtoull(q, NULL, 10);
+        if (at != frame) continue;
+        for (const char *r = strchr(q, ':'); r && *r && *r != ';'; r = strpbrk(r + 1, ",;")) {
+          if (*r == ';') break;
+          unsigned addr, val;
+          if (sscanf(r + 1, "%x=%x", &addr, &val) == 2 && addr >= 0xc000 && addr < 0xe000) gb->wram[addr >> 12 & 1][addr & 0xfff] = (uint8_t)val;
+        }
+      }
+    }
     frame = gb_run_frame(gb);
     if (gb->hung) { fprintf(stderr, "cpu hung at frame %llu pc %04x\n", (unsigned long long)frame, gb->pc); return 1; }
 
