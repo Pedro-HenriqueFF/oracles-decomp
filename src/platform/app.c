@@ -40,6 +40,8 @@
 #define ON_PHONE false
 #endif
 #include "wide/wide.h"
+#include "wide/hud.h"
+#include "ui/labels.h"
 #include "wide/npcs.h"
 #include "mods/mods.h"
 #include <stdio.h>
@@ -126,6 +128,22 @@ static bool cached(const char *cache, const char *game) {
 
 static Settings settings;
 
+// The device that sent the last input decides what the screen calls the buttons (touch_on covers
+// touch), and the last pad's type what Auto means.
+static bool touch_on, pad_last;
+static PadStyle pad_seen = STYLE_AUTO;
+
+static PadStyle style_of_pad(SDL_JoystickID id) {
+  switch (SDL_GetGamepadTypeForID(id)) {
+  case SDL_GAMEPAD_TYPE_PS3: case SDL_GAMEPAD_TYPE_PS4: case SDL_GAMEPAD_TYPE_PS5: return STYLE_PLAYSTATION;
+  case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO: case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT:
+  case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT: case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR: return STYLE_NINTENDO;
+  default: return STYLE_XBOX;
+  }
+}
+static InputDevice input_device(void) { return touch_on ? DEVICE_TOUCH : pad_last ? DEVICE_PAD : DEVICE_KEYBOARD; }
+static PadStyle pad_style(void) { return pad_style_resolve(settings.pad_style, pad_seen); }
+
 static uint8_t joy_of(Action a) {
   static const uint8_t bits[ACTIONS] = {JOY_UP, JOY_DOWN, JOY_LEFT, JOY_RIGHT, JOY_A, JOY_B, JOY_START, JOY_SELECT, 0, 0, 0, 0, 0};
   return a < ACTIONS ? bits[a] : 0;
@@ -140,6 +158,8 @@ static const char *key_name(int sc) {
 }
 static const char *pad_name(int button) {
   static char buf[32];
+  const char *styled = pad_style_name(pad_style(), button);
+  if (styled) return styled;
   if (button == PAD_RIGHT_TRIGGER) return "RT";
   if (button == PAD_LEFT_TRIGGER) return "LT";
   const char *s = SDL_GetGamepadStringForButton((SDL_GamepadButton)button);
@@ -497,9 +517,6 @@ static void apply_game_settings(void) {
   features.quick_swap = settings.quick_swap;
   features.fast_menus = settings.fast_menus;
   features.four_slots = settings.four_slots;
-  // With the boxes on screen the B box must keep showing the B item, so holding X or Y should not
-  // repaint it with the item it lends to the B slot.
-  features.slot_boxes = settings.four_slots && settings.widescreen;
 }
 
 // The items on X and Y, per game: two bytes in item_buttons.
@@ -535,7 +552,7 @@ static void item_button(GB *gb, const char *dir, int slot, bool down) {
 #define TEST_TOUCH_ID 0x7e57
 #define FINGERS 10
 static TouchLayout layout;
-static bool touch_on, touch_mouse;
+static bool touch_mouse;
 static uint32_t touch_held, touch_pressed, touch_released;
 static struct { SDL_FingerID id; uint32_t held; bool down; } fingers[FINGERS];
 static UiTheme overlay_theme;            // the game's title-screen colours, behind widescreen's sides
@@ -621,6 +638,12 @@ static bool poll_event(SDL_Event *ev) {
     menu_finger = ev->tfinger.fingerID;
     menu_finger_down = true;
   }
+  if (ev->type == SDL_EVENT_KEY_DOWN && ev->key.scancode != SDL_SCANCODE_AC_BACK) pad_last = false;
+  else if (ev->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) { pad_last = true; pad_seen = style_of_pad(ev->gbutton.which); }
+  else if (ev->type == SDL_EVENT_GAMEPAD_AXIS_MOTION && (ev->gaxis.value > 16000 || ev->gaxis.value < -16000)) {
+    pad_last = true;
+    pad_seen = style_of_pad(ev->gaxis.which);
+  }
   touch_event(ev);
   stick_event(ev);
   if (ev->type == SDL_EVENT_DID_ENTER_FOREGROUND) sync_retry_soon();
@@ -666,11 +689,44 @@ static void shot_if_due(SDL_Renderer *ren) {
   }
 }
 
+// A picture's textures: straight to the screen, or through the filter at an integer scale first.
+typedef struct { SDL_Texture *direct, *big; int direct_w, big_scale, big_w; uint8_t *buf; } PicTextures;
+
+static void draw_pic(SDL_Renderer *ren, PicTextures *t, const uint8_t *rgb, int pic_w, int scale, bool fractional, ScreenFilter filter,
+                     const SDL_FRect *dst) {
+  if (!fractional && (filter == FILTER_SHARP || scale < 2) && !settings.gbc_colours) {
+    if (!t->direct || t->direct_w != pic_w) {
+      if (t->direct) SDL_DestroyTexture(t->direct);
+      t->direct = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, pic_w, FB_H);
+      SDL_SetTextureScaleMode(t->direct, SDL_SCALEMODE_NEAREST);
+      t->direct_w = pic_w;
+    }
+    SDL_UpdateTexture(t->direct, NULL, rgb, pic_w * 3);
+    SDL_RenderTexture(ren, t->direct, NULL, dst);
+    return;
+  }
+  if (!t->big || t->big_scale != scale || t->big_w != pic_w) {
+    if (t->big) SDL_DestroyTexture(t->big);
+    t->big = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, pic_w * scale, FB_H * scale);
+    free(t->buf);
+    t->buf = malloc((size_t)pic_w * scale * FB_H * scale * 3);
+    t->big_scale = scale;
+    t->big_w = pic_w;
+  }
+  SDL_SetTextureScaleMode(t->big, fractional ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
+  ui_filter(rgb, pic_w, settings.gbc_colours, scale < 2 ? FILTER_SHARP : filter, scale, t->buf);
+  SDL_UpdateTexture(t->big, NULL, t->buf, pic_w * scale * 3);
+  SDL_RenderTexture(ren, t->big, NULL, dst);
+}
+
+// Item X and Y beside the narrow picture, set by show_game for the frame it presents: the boxes
+// where they fit, else the narrow strips; strips_shown says whether the last frame had the room.
+static const uint8_t *box_rgb[2], *strip_rgb[2];
+static bool strips_shown;
+
 // Draws a picture pic_w (160 or WIDE_W) x 144 at the layout's place and scale, then the overlay.
 static void present_frame(SDL_Renderer *ren, const uint8_t *rgb, int pic_w) {
-  static SDL_Texture *direct, *big;
-  static int direct_w, big_scale, big_w;
-  static uint8_t *buf;
+  static PicTextures pic, strip[2];
   int w = pic_w, h = FB_H;
   SDL_GetCurrentRenderOutputSize(ren, &w, &h);
   SDL_Rect safe = {0, 0, w, h};
@@ -688,34 +744,26 @@ static void present_frame(SDL_Renderer *ren, const uint8_t *rgb, int pic_w) {
   SDL_RenderClear(ren);
   SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
   if (touch_on) SDL_RenderFillRect(ren, &dst);
-  if (!fractional && (settings.filter == FILTER_SHARP || scale < 2) && !settings.gbc_colours) {
-    if (!direct || direct_w != pic_w) {
-      if (direct) SDL_DestroyTexture(direct);
-      direct = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, pic_w, FB_H);
-      SDL_SetTextureScaleMode(direct, SDL_SCALEMODE_NEAREST);
-      direct_w = pic_w;
-    }
-    SDL_UpdateTexture(direct, NULL, rgb, pic_w * 3);
-    SDL_RenderTexture(ren, direct, NULL, &dst);
-  } else {
-    if (!big || big_scale != scale || big_w != pic_w) {
-      if (big) SDL_DestroyTexture(big);
-      big = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, pic_w * scale, FB_H * scale);
-      free(buf);
-      buf = malloc((size_t)pic_w * scale * FB_H * scale * 3);
-      big_scale = scale;
-      big_w = pic_w;
-    }
-    SDL_SetTextureScaleMode(big, fractional ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
-    ui_filter(rgb, pic_w, settings.gbc_colours, scale < 2 ? FILTER_SHARP : settings.filter, scale, buf);
-    SDL_UpdateTexture(big, NULL, buf, pic_w * scale * 3);
-    SDL_RenderTexture(ren, big, NULL, &dst);
+  draw_pic(ren, &pic, rgb, pic_w, scale, fractional, settings.filter, &dst);
+  strips_shown = false;
+  for (int k = 0; k < 2 && !strips_shown && strip_rgb[0] && pic_w == FB_W && !touch_on; k++) {
+    const uint8_t *const *src = k ? strip_rgb : box_rgb;
+    int sw_px = k ? WIDE_STRIP_W : WIDE_BOX_W;
+    float sw = dst.w * sw_px / pic_w;
+    SDL_FRect left = {dst.x - sw, dst.y, sw, dst.h}, right = {dst.x + dst.w, dst.y, sw, dst.h};
+    if (left.x < safe.x || right.x + sw > safe.x + safe.w) continue;
+    // CRT bends and darkens a picture towards its own edges, which on a strip this narrow is all of it
+    ScreenFilter f = settings.filter == FILTER_CRT ? FILTER_SHARP : settings.filter;
+    draw_pic(ren, &strip[0], src[0], sw_px, scale, fractional, f, &left);
+    draw_pic(ren, &strip[1], src[1], sw_px, scale, fractional, f, &right);
+    strips_shown = true;
   }
   if (touch_on && !overlay_blocked) gui_pad(&layout, touch_held, &gui_t);
   bool toast_on = toast[0] && SDL_GetTicks() < toast_until;
   if (ui_layer || toast_on || waiting) {
     GuiFrame f = {{(float)layout.game_px.x, (float)layout.game_px.y, (float)layout.game_px.w, (float)layout.game_px.h},
-                  {(float)safe.x, (float)safe.y, (float)safe.w, (float)safe.h}, (float)w, (float)h, !touch_on};
+                  {(float)safe.x, (float)safe.y, (float)safe.w, (float)safe.h}, (float)w, (float)h, !touch_on, NULL, NULL};
+    menu_hint_keys(input_device(), pad_style(), &f.ok_key, &f.back_key);
     if (ui_layer) ui_layer(&f);
     else gui_begin(gui_display_scale());
     if (waiting) gui_wait(waiting, SDL_GetTicks(), &gui_t, &f);
@@ -749,42 +797,65 @@ static int rd_room(const GBSample *sample, bool seasons) {
   return sample->wram[0][seasons ? 0xc4c : 0xc30];
 }
 
-// A game frame: in widescreen the room around the camera fills the sides (the message stays centred).
-static void present_game(SDL_Renderer *ren, SDL_Texture *tex, const GBSample *sample, const uint8_t *rgb, bool seasons, const uint8_t *rom, size_t rom_size) {
+static void hud_glyphs(uint8_t g[4]) {
+  InputDevice d = input_device();
+  PadStyle style = pad_style();
+  for (int i = 0; i < HUD_SLOTS; i++) g[i] = hud_slot_glyph(d, style, &settings.bindings, (HudSlot)i);
+}
+
+// The game's picture as shown: in widescreen the room around the camera fills the sides (the
+// message stays centred), the status bar names the buttons in use and the mods' overlay is on top.
+// rgb itself is left as the game drew it.
+static void show_game(SDL_Renderer *ren, const GBSample *sample, const uint8_t *rgb, bool seasons, const uint8_t *rom, size_t rom_size) {
+  static uint8_t pic[WIDE_W * FB_H * 3], boxes[2][WIDE_BOX_W * FB_H * 3], strips[2][WIDE_STRIP_W * FB_H * 3];
+  int w = settings.widescreen ? WIDE_W : FB_W;
+  // The X and Y items go in the space widescreen adds beside the status bar, or in the narrow
+  // picture's side bars when they are wide enough; the game has nowhere to put them.
+  WideOptions o = {seasons, settings.dim_sides, {overlay_theme.bg.r, overlay_theme.bg.g, overlay_theme.bg.b}, rom, rom_size,
+                   settings.four_slots, {features.slot_item[0], features.slot_item[1]}, wide_npcs_room, {0}};
+  hud_glyphs(o.glyph);
+  if (!settings.widescreen) {
+    memcpy(pic, rgb, FB_W * FB_H * 3);
+    hud_relabel(sample, o.glyph[HUD_B], o.glyph[HUD_A], pic);
+    if (wide_slot_strip(sample, &o, 0, true, boxes[0]) && wide_slot_strip(sample, &o, 1, true, boxes[1]) &&
+        wide_slot_strip(sample, &o, 0, false, strips[0]) && wide_slot_strip(sample, &o, 1, false, strips[1]))
+      for (int i = 0; i < 2; i++) { box_rgb[i] = boxes[i]; strip_rgb[i] = strips[i]; }
+  } else wide_render(sample, &o, pic);
+  // the overlay was drawn for the width the mods last saw, which a paused game can have changed since
+  const ModOverlay *ov = mods_overlay();
+  if (ov->width == w)
+    for (int y = 0; y < FB_H; y++)
+      for (int x = 0; x < w; x++)
+        if (overlay_cover_at(ov, x, y)) memcpy(pic + ((size_t)y * w + x) * 3, overlay_rgb_at(ov, x, y), 3);
+  present_frame(ren, pic, w);
+  box_rgb[0] = box_rgb[1] = strip_rgb[0] = strip_rgb[1] = NULL;
+  // With the boxes on screen the B box must keep showing the B item, so holding X or Y should not
+  // repaint it with the item it lends to the B slot.
+  features.slot_boxes = settings.four_slots && (settings.widescreen || strips_shown);
+}
+
+// The running game's paused picture: menus drawn over it show it as the game frame it was.
+static struct { const uint8_t *rgb; const GB *gb; bool seasons; const uint8_t *rom; size_t rom_size; } paused_game;
+
+// A game frame.
+static void present_game(SDL_Renderer *ren, const GBSample *sample, const uint8_t *rgb, bool seasons, const uint8_t *rom, size_t rom_size) {
   // Mods draw before the filters, so an overlay scales with the picture and takes the chosen
-  // filter rather than sitting on top of it looking sharp. Run once here, above the
-  // widescreen/narrow split below, rather than only after wide_render: the non-widescreen branch
-  // returns through present() before ever reaching wide_render, so a mod would never run for the
-  // (common) non-widescreen case if this were placed after it instead.
+  // filter rather than sitting on top of it looking sharp. Run here, before the widescreen/narrow
+  // split in show_game, so a mod runs in both.
   ModsFrame mf = {sample->wram[0], sample->hram, seasons, settings.widescreen ? WIDE_W : FB_W,
                   rd_room(sample, seasons), rom, rom_size, &mod_font};
   mods_frame(&mf);
-  const ModOverlay *ov = mods_overlay();
-
-  if (!settings.widescreen) {
-    uint8_t *pic = (uint8_t *)rgb;
-    for (int y = 0; y < FB_H; y++)
-      for (int x = 0; x < ov->width; x++)
-        if (overlay_cover_at(ov, x, y)) memcpy(pic + ((size_t)y * ov->width + x) * 3, overlay_rgb_at(ov, x, y), 3);
-    present(ren, tex, rgb);
-    return;
-  }
-  static uint8_t wide[WIDE_W * FB_H * 3];
-  // The X and Y items go in the space widescreen adds beside the status bar; the game has nowhere to
-  // put them, so without the wider picture there is no room to show them in.
-  WideOptions o = {seasons, settings.dim_sides, {overlay_theme.bg.r, overlay_theme.bg.g, overlay_theme.bg.b}, rom, rom_size,
-                   settings.four_slots, {features.slot_item[0], features.slot_item[1]}, wide_npcs_room};
-  wide_render(sample, &o, wide);
-  for (int y = 0; y < FB_H; y++)
-    for (int x = 0; x < ov->width; x++)
-      if (overlay_cover_at(ov, x, y)) memcpy(wide + ((size_t)y * ov->width + x) * 3, overlay_rgb_at(ov, x, y), 3);
-  present_frame(ren, wide, WIDE_W);
+  show_game(ren, sample, rgb, seasons, rom, rom_size);
 }
 
 // A 160-wide picture (a menu, or the game where the sides are not drawn): with the current message,
 // and in widescreen centred on the theme's border colour.
 static void present(SDL_Renderer *ren, SDL_Texture *tex, const uint8_t *rgb) {
   (void)tex;
+  if (paused_game.gb && paused_game.gb->sample && rgb == paused_game.rgb) {
+    show_game(ren, paused_game.gb->sample, rgb, paused_game.seasons, paused_game.rom, paused_game.rom_size);
+    return;
+  }
   if (!settings.widescreen) { present_frame(ren, rgb, FB_W); return; }
   static uint8_t wide[WIDE_W * FB_H * 3];
   const int side = (WIDE_W - FB_W) / 2;
@@ -1625,6 +1696,11 @@ static GameEnd run_game(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, co
   }
   framebuffer_to_rgb(gb->sample ? gb->sample->framebuffer : gb->framebuffer, rgb);
   session = (Session){gb, dir, sav, paused_rgb, &mode, &parked, false, &frames, gs->game};
+  paused_game.rgb = paused_rgb;
+  paused_game.gb = gb;
+  paused_game.seasons = !ages;
+  paused_game.rom = rom;
+  paused_game.rom_size = rom_size;
   playing = gs->game;
 
   for (bool running = true; running && !gb->hung;) {
@@ -1803,7 +1879,7 @@ static GameEnd run_game(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, co
     uint32_t n = apu_read_samples(&gb->apu, samples, APU_RING);
     if (audio && mode == MODE_PLAY) SDL_PutAudioStreamData(audio, samples, n * 4);
     framebuffer_to_rgb(gb->sample->framebuffer, rgb);
-    present_game(ren, tex, gb->sample, rgb, !ages, rom, rom_size);
+    present_game(ren, gb->sample, rgb, !ages, rom, rom_size);
     for (int i = 0; i < mod_count; i++) {
       bool now = mods_enabled(i);
       if (mod_was_enabled[i] && !now) show_status("Mod disabled");
@@ -1827,6 +1903,7 @@ static GameEnd run_game(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, co
   // entirely if the player picks one next. main()'s loop re-scans game-agnostically before the
   // launcher is shown again, and the next run_game re-inits for whichever game is actually picked.
   mods_shutdown();
+  paused_game.gb = NULL;
   wide_npcs_stop();
   free(gb); free(rom); free(tab);
   return end;

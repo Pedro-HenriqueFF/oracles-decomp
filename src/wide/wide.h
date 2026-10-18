@@ -29,13 +29,23 @@ typedef struct {
   uint8_t slot_item[2];         // what is on each of them (0: the box is empty)
   // the sprites of a neighbouring room, NULL where none are known (wide/npcs.h)
   const WideRoomSprites *(*room_sprites)(int group, int room);
+  uint8_t glyph[4];             // the four slots' letters, X Y B A (ui/labels.h codes; 0: the game's own)
 } WideOptions;
 
 // out: WIDE_W x FB_H RGB24.
 void wide_render(const GBSample *s, const WideOptions *o, uint8_t *out);
+enum { WIDE_STRIP_W = 16, WIDE_BOX_W = 38 };
+// Item X/Y beside the narrow picture: slot 0 (X) or 1 (Y) as an RGB24 strip FB_H tall, either the
+// widescreen box (WIDE_BOX_W wide, as tall as the status bar) or, where that does not fit, the
+// letter above the icon (WIDE_STRIP_W wide). False (out untouched) unless o->slots is on and the
+// status bar is up.
+bool wide_slot_strip(const GBSample *s, const WideOptions *o, int slot, bool box, uint8_t *out);
 // The room's background pixel (RGB555) at screen (x, y), x from -48 to 207, or -1 where the room is
 // not shown there. Inside 0-159 it matches the PPU's background wherever no sprite covers it.
 int wide_room_pixel(const GBSample *s, bool seasons, int x, int y);
+// The first screen x the window layer covers on line y (it starts at WX - 7 and runs to the right
+// edge), INT_MAX when it is off.
+int wide_window_left(const GBSample *s, int y);
 bool wide_window_at(const GBSample *s, int x, int y);
 // The pixels of line y across the wide picture (x from -48) of the engine's off-screen sprite list
 // alone (wide/npcs.c's copies list the room's objects there), RGB555 or -1, with the

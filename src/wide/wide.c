@@ -1,7 +1,10 @@
 #include "wide/wide.h"
 #include "wide/item.h"
 #include "wide/room.h"
+#include "wide/hud.h"
+#include "wide/put555.h"
 #include "hw/render.h"
+#include <limits.h>
 #include <string.h>
 
 // The RAM the renderer reads (the same address in both games unless two are given)
@@ -62,6 +65,15 @@ static View view_of(const GBSample *s, const GameRam *r) {
   return v;
 }
 
+// The status bar is up whenever the split is on, menu or no menu. A menu drawn over the whole screen
+// (the map) leaves the split flag set but never switches LCDC at the bar's end, so its top lines are
+// its own picture, not a status bar.
+static bool bar_up(const GBSample *s, const GameRam *r) {
+  int split = lcd_split(s, r);
+  return (split == 2 || split == 3) &&
+         (view_of(s, r).shown || (rd(s, W_OPENED_MENU) && s->line_lcdc[0] != s->line_lcdc[STATUS_BAR_LINES]));
+}
+
 static bool room_shown(const GBSample *s, const GameRam *r) {
   View v = view_of(s, r);
   return v.shown && !v.moving;
@@ -78,7 +90,7 @@ static uint8_t bg_cover(int ci, uint8_t attr) { return ci ? (uint8_t)(1 | (attr 
 // and map, so VRAM-only changes (text, door animations) show exactly as in the middle. RGB555.
 static int bg_pixel(const GBSample *s, int x, int y, uint8_t *cover) {
   uint8_t lcdc = s->line_lcdc[y];
-  int d = s->line_drawn[y];
+  int d = s->line_drawn[y] & 1;
   int px = (x + s->line_scx[y]) & 0xff, py = (y + s->line_scy[y]) & 0xff;
   int idx = ((lcdc & 0x08) ? 0x1c00 : 0x1800) + (py >> 3) * 32 + (px >> 3);
   uint8_t tile = s->drawn_vram[d][0][idx], attr = s->drawn_vram[d][1][idx];
@@ -93,17 +105,12 @@ static int bg_pixel(const GBSample *s, int x, int y, uint8_t *cover) {
   return s->drawn_bg_pal[d][i] | (s->drawn_bg_pal[d][i + 1] << 8);
 }
 
-static void put555(uint8_t *out, int c, bool dim) {
-  int r = c & 31, g = (c >> 5) & 31, b = (c >> 10) & 31;
-  uint8_t rgb[3] = {(uint8_t)((r << 3) | (r >> 2)), (uint8_t)((g << 3) | (g >> 2)), (uint8_t)((b << 3) | (b >> 2))};
-  for (int k = 0; k < 3; k++) out[k] = dim ? (uint8_t)(rgb[k] * 3 / 4) : rgb[k];
+int wide_window_left(const GBSample *s, int y) {
+  uint8_t lcdc = s->line_lcdc[y];
+  return (lcdc & 0x20) && y >= s->line_wy[y] && s->line_wx[y] <= 166 ? s->line_wx[y] - 7 : INT_MAX;
 }
 
-// The window layer covers screen x on line y (it starts at WX - 7 and runs to the right edge)
-bool wide_window_at(const GBSample *s, int x, int y) {
-  uint8_t lcdc = s->line_lcdc[y];
-  return (lcdc & 0x20) && y >= s->line_wy[y] && s->line_wx[y] <= 166 && x + 7 >= s->line_wx[y];
-}
+bool wide_window_at(const GBSample *s, int x, int y) { return x >= wide_window_left(s, y); }
 
 enum { NOTHING = -1, OUTSIDE = -2 };
 
@@ -245,7 +252,7 @@ static const uint8_t gba_curve[32] = {
 static void learn_curve(const GBSample *s, int line, uint8_t curve[3][32]) {
   bool gba = s->hram[0xff96 - 0xff80] == 0xff, exact = true;
   bool known[3][32] = {{0}};
-  const uint8_t *drawn = s->drawn_bg_pal[s->line_drawn[line]], *stored = &s->wram[2][0xe80];
+  const uint8_t *drawn = s->drawn_bg_pal[s->line_drawn[line] & 1], *stored = &s->wram[2][0xe80];
   for (int i = 0; i < 64; i += 2) {
     int from = stored[i] | stored[i + 1] << 8, to = drawn[i] | drawn[i + 1] << 8;
     for (int c = 0; c < 3; c++) {
@@ -277,7 +284,7 @@ static void learn_curve(const GBSample *s, int line, uint8_t curve[3][32]) {
 static int neighbour_pixel(const GBSample *s, const Neighbour *n, int nx, int ny, int y, uint8_t *cover) {
   const WideRoom *w = n->room;
   if (nx < 0 || ny < 0 || nx >= w->width * 8 || ny >= w->height * 8) return NOTHING;
-  int k = (ny >> 3) * 32 + (nx >> 3), d = s->line_drawn[y];
+  int k = (ny >> 3) * 32 + (nx >> 3), d = s->line_drawn[y] & 1;
   uint8_t tile = w->tiles[k], attr = w->attrs[k];
   int fx = nx & 7, fy = ny & 7, bank = (attr >> 3) & 1, addr = (tile < 0x80 ? 0x1000 : 0) + tile * 16;
   if (attr & 0x20) fx = 7 - fx;
@@ -382,16 +389,9 @@ void wide_sprite_row(const GBSample *s, int y, int16_t c[WIDE_W], bool behind[WI
 // tie us to wherever the bar happens to put its own.
 enum { HUD_SHIFT = 30, SLOT_LEFT = 2, SLOT_PITCH = 38,
        SLOT_OPEN = 6, SLOT_ICON = 10, SLOT_CLOSE = 28, SLOT_BOX_W = 16,
-       SLOT_TOP = 1, SLOT_BOTTOM = 14 };
+       SLOT_TOP = 1, SLOT_BOTTOM = 14, SLOT_BOX = SLOT_CLOSE + 2 };
 
-// 'X' and 'Y' in the status bar's own lettering: four pixels wide and seven tall, a pixel in from
-// the left of the cell, which is how the bar draws its B and A. The small bar font has no letters
-// past those, so these follow the shapes the ROM's larger font uses.
-enum { SLOT_LETTER_TOP = 1, SLOT_LETTER_H = 7 };
-static const uint8_t slot_letter[2][SLOT_LETTER_H] = {
-  {0x48, 0x48, 0x30, 0x30, 0x30, 0x48, 0x48},         // X
-  {0x48, 0x48, 0x30, 0x30, 0x30, 0x30, 0x30},         // Y
-};
+enum { SLOT_LETTER_TOP = 1 };
 
 typedef struct { bool show; bool on[2]; WideItemIcon icon[2]; int x[2]; } SlotIcons;
 
@@ -406,16 +406,18 @@ static void slot_icons(const GBSample *s, const WideOptions *o, SlotIcons *si) {
   }
 }
 
-static void draw_slot_icons(const GBSample *s, const SlotIcons *si, int y, uint8_t *row) {
+static void draw_slot_icons(const GBSample *s, const WideOptions *o, const SlotIcons *si, int y, uint8_t *row) {
   if (!si->show || y >= 16) return;                     // an icon is as tall as the status bar
   // The letters sit in the middle of the bar's height, in the colour the game writes its own text in.
-  const uint8_t *bg = s->drawn_bg_pal[s->line_drawn[y]];
+  const uint8_t *bg = s->drawn_bg_pal[s->line_drawn[y] & 1];
   int ink = bg[3 * 2] | (bg[3 * 2 + 1] << 8);           // BG palette 0, colour 3
   for (int i = 0; i < 2; i++) {
     int base = SLOT_LEFT + i * SLOT_PITCH;
-    if (y >= SLOT_LETTER_TOP && y < SLOT_LETTER_TOP + SLOT_LETTER_H) {
-      uint8_t bits = slot_letter[i][y - SLOT_LETTER_TOP];
-      for (int x = 0; x < 8; x++)
+    if (y >= SLOT_LETTER_TOP && y < SLOT_LETTER_TOP + HUD_GLYPH_H) {
+      const uint8_t *g = hud_glyph(o->glyph[i]);
+      if (!g) g = hud_glyph(i ? 'Y' : 'X');
+      uint8_t bits = g[y - SLOT_LETTER_TOP];
+      for (int x = 0; x < 6; x++)
         if (bits & (0x80 >> x)) put555(row + (base + x) * 3, ink, false);
     }
     if (y >= SLOT_TOP && y <= SLOT_BOTTOM) {
@@ -438,6 +440,57 @@ static void draw_slot_icons(const GBSample *s, const SlotIcons *si, int y, uint8
       put555(row + (si->x[i] + x) * 3, s->ob_pal[p] | (s->ob_pal[p + 1] << 8), false);
     }
   }
+}
+
+// One slot for the narrow picture's side bars, the rest of the strip black: with room, the box
+// widescreen draws (the same pixels, cut out of a bar row drawn the same way); without, its letter
+// above its icon on a tab of the bar's colour hanging from the top.
+enum { STRIP_LETTER_X = 5, STRIP_ICON_TOP = 9, STRIP_H = STRIP_ICON_TOP + 17 };
+
+bool wide_slot_strip(const GBSample *s, const WideOptions *o, int slot, bool box, uint8_t *out) {
+  const GameRam *r = o->seasons ? &seasons_ram : &ages_ram;
+  if (!o->slots || !bar_up(s, r)) return false;
+  int w = box ? WIDE_BOX_W : WIDE_STRIP_W;
+  memset(out, 0, (size_t)w * FB_H * 3);
+  if (box) {
+    static SlotIcons icons;
+    static uint8_t row[WIDE_W * 3];
+    slot_icons(s, o, &icons);
+    // the game's gap of eight between boxes, towards the picture: after X's box, before Y's
+    int at = slot ? SLOT_PITCH - SLOT_BOX : 1;
+    for (int y = 0; y < STATUS_BAR_LINES; y++) {
+      for (int x = 0; x < WIDE_W; x++) put555(row + x * 3, s->framebuffer[y * FB_W], false);
+      draw_slot_icons(s, o, &icons, y, row);
+      uint8_t *line = out + (size_t)y * w * 3;
+      for (int x = 0; x < w; x++) memcpy(line + x * 3, row, 3);
+      memcpy(line + at * 3, row + (SLOT_LEFT + slot * SLOT_PITCH) * 3, SLOT_BOX * 3);
+    }
+    return true;
+  }
+  const uint8_t *bg = s->drawn_bg_pal[s->line_drawn[0] & 1];
+  int paper = s->framebuffer[0], ink = bg[3 * 2] | (bg[3 * 2 + 1] << 8);
+  const uint8_t *g = hud_glyph(o->glyph[slot]);
+  if (!g) g = hud_glyph(slot ? 'Y' : 'X');
+  WideItemIcon ic;
+  bool icon = o->rom && o->slot_item[slot] &&
+              wide_item_icon(o->rom, o->rom_size, o->seasons, o->slot_item[slot], &s->wram[0][0x600], &ic);
+  int icon_x = icon ? (w - ic.halves * 8) / 2 : 0;
+  for (int y = 0; y < STRIP_H; y++) {
+    uint8_t *row = out + (size_t)y * w * 3;
+    for (int x = 0; x < w; x++) put555(row + x * 3, paper, false);
+    if (y >= SLOT_LETTER_TOP && y < SLOT_LETTER_TOP + HUD_GLYPH_H)
+      for (int x = 0; x < 6; x++)
+        if (g[y - SLOT_LETTER_TOP] & (0x80 >> x)) put555(row + (STRIP_LETTER_X + x) * 3, ink, false);
+    int iy = y - STRIP_ICON_TOP;
+    if (!icon || iy < 0 || iy >= 16) continue;
+    for (int x = 0; x < ic.halves * 8; x++) {
+      int ci = ic.ci[iy][x];
+      if (!ci) continue;
+      int p = ic.pal[x >> 3] * 8 + ci * 2;
+      put555(row + (icon_x + x) * 3, s->ob_pal[p] | (s->ob_pal[p + 1] << 8), false);
+    }
+  }
+  return true;
 }
 
 // The colour that goes beside a menu. The strips take the one colour its edges are mostly made of:
@@ -477,6 +530,7 @@ void wide_render(const GBSample *s, const WideOptions *o, uint8_t *out) {
   static uint8_t middle[FB_W * FB_H * 3];
   static Around a;
   framebuffer_to_rgb(s->framebuffer, middle);
+  hud_relabel(s, o->glyph[2], o->glyph[3], middle);
   const GameRam *r = o->seasons ? &seasons_ram : &ages_ram;
   memset(a.resolved, 0, sizeof a.resolved);
   a.s = s;
@@ -493,10 +547,7 @@ void wide_render(const GBSample *s, const WideOptions *o, uint8_t *out) {
   // The status bar is up whenever the split is on, menu or no menu, so it carries across the whole
   // width in both. The strips below it follow the menu when there is one.
   bool menu = rd(s, W_OPENED_MENU) != 0;
-  int split = lcd_split(s, r);
-  // A menu drawn over the whole screen (the map) leaves the split flag set but never switches LCDC
-  // at the bar's end, so its top lines are its own picture, not a status bar.
-  bool bar_shown = (split == 2 || split == 3) && (a.v.shown || (menu && s->line_lcdc[0] != s->line_lcdc[STATUS_BAR_LINES]));
+  bool bar_shown = bar_up(s, r);
   // A menu's strips hold one steady colour. Between pages the game fades the screen to white and
   // then blanks it, and the frame the fade ends on is still white, so the colour is taken only from
   // a picture that has been settled for a couple of frames and kept the rest of the time -- strips
@@ -526,7 +577,7 @@ void wide_render(const GBSample *s, const WideOptions *o, uint8_t *out) {
       for (int x = 0; x < bar; x++) memcpy(row + x * 3, mid, 3);
       for (int x = bar + FB_W; x < WIDE_W; x++) memcpy(row + x * 3, mid + (FB_W - 1) * 3, 3);
       memcpy(row + (size_t)bar * 3, mid, FB_W * 3);
-      draw_slot_icons(s, &icons, y, row);
+      draw_slot_icons(s, o, &icons, y, row);
       continue;
     }
     bool line = rooms && y >= STATUS_BAR_LINES && (s->line_lcdc[y] & 0x81) == 0x81 && !wide_window_at(s, 0, y);

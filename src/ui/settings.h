@@ -4,6 +4,7 @@
 #include "ui/launcher.h"
 #include "ui/menu.h"
 #include "ui/controls.h"
+#include "ui/labels.h"
 
 // XBRZ and HQX are the two pixel-art scalers: they round off the jagged diagonals instead of
 // enlarging each pixel into a square. See src/ui/upscale.h.
@@ -23,12 +24,13 @@ typedef struct {
   bool fast_menus;              // quick fades into and out of the inventory and map
   bool four_slots;              // Item X / Item Y buttons, assigned in the inventory
   bool haptics;                 // a tick when a finger presses a control or taps a menu (Android)
+  PadStyle pad_style;           // the names on screen for a controller: Auto follows the pad's type
   Bindings bindings;
   char sync_label[12];          // the SYNC row's value, kept by the app (sync.ini, not settings.ini)
   bool portable;                // portable.txt beside the app, kept by the app (not settings.ini)
 } Settings;
 
-typedef enum { SET_VOLUME, SET_SCREEN, SET_SCALE, SET_WIDESCREEN, SET_DIM_SIDES, SET_COLOURS, SET_FULLSCREEN, SET_FAST_TEXT, SET_FAST_MENUS, SET_QUICK_SWAP, SET_FOUR_SLOTS, SET_HAPTICS, SET_CONTROLS, SET_SYNC, SET_PORTABLE, SET_ROWS } SettingsRow;
+typedef enum { SET_VOLUME, SET_SCREEN, SET_SCALE, SET_WIDESCREEN, SET_DIM_SIDES, SET_COLOURS, SET_FULLSCREEN, SET_FAST_TEXT, SET_FAST_MENUS, SET_QUICK_SWAP, SET_FOUR_SLOTS, SET_HAPTICS, SET_CONTROLS, SET_PAD_STYLE, SET_SYNC, SET_PORTABLE, SET_ROWS } SettingsRow;
 
 typedef struct {
   SettingsRow sel;

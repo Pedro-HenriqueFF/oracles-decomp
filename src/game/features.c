@@ -40,6 +40,7 @@ bool features_assign_slot(GB *gb, int slot) {
 
 static int held_slot = -1;
 static uint8_t held_b;
+static bool held_refresh;                // the press redrew the bar, so the release must too
 
 static bool in_storage(GB *gb, uint8_t item) {
   for (int i = 0; i < INVENTORY_CAPACITY; i++)
@@ -58,7 +59,8 @@ uint8_t features_slot_press(GB *gb, int slot) {
   W8(wInventoryB) = item;
   // Only redraw the bar when the item has nowhere else to be seen: with the X and Y boxes on screen
   // the player can already see what they pressed, and the B box should keep its own item.
-  if (!features.slot_boxes) W8(wStatusBarNeedsRefresh) |= 0x01;
+  held_refresh = !features.slot_boxes;
+  if (held_refresh) W8(wStatusBarNeedsRefresh) |= 0x01;
   return JOY_B;
 }
 
@@ -67,5 +69,5 @@ void features_slot_release(GB *gb, int slot) {
   held_slot = -1;
   if (W8(wInventoryB) != features.slot_item[slot]) return;
   W8(wInventoryB) = held_b;
-  if (!features.slot_boxes) W8(wStatusBarNeedsRefresh) |= 0x01;
+  if (held_refresh) W8(wStatusBarNeedsRefresh) |= 0x01;
 }

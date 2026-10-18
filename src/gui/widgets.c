@@ -126,9 +126,10 @@ void section(const GuiTheme *t, const char *s) {
 bool header(const GuiTheme *t, const char *title, const char *hint) {
   Clay_ElementId back = CLAY_ID("Back");
   bool tapped = gui_tapped(back);
+  // the sides are the same width, so the title stays centred, and wide enough for the hint
+  uint16_t w = hint ? gui_text_width(hint, TAG) : 0, side = w > gui_px(150) ? w : gui_px(150);
   CLAY({.layout = {.sizing = {CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(gui_px(56))}, .childAlignment = {.y = CLAY_ALIGN_Y_CENTER}}}) {
-    // the sides are the same width, so the title stays centred
-    CLAY({.layout = {.sizing = {CLAY_SIZING_FIXED(gui_px(150)), CLAY_SIZING_FIXED(gui_px(ROW_H))}}}) {
+    CLAY({.layout = {.sizing = {CLAY_SIZING_FIXED(side), CLAY_SIZING_FIXED(gui_px(ROW_H))}}}) {
       CLAY({.id = back, .layout = {.sizing = {CLAY_SIZING_FIT(0), CLAY_SIZING_GROW(0)}, .padding = {0, gui_px(12), 0, 0}, .childGap = gui_px(8),
                                    .childAlignment = {.y = CLAY_ALIGN_Y_CENTER}}}) {
         label("<", TEXT, t->muted);
@@ -138,7 +139,7 @@ bool header(const GuiTheme *t, const char *title, const char *hint) {
     spacer();
     CLAY_TEXT(gui_str("%s", title), text_spaced(SMALL, t->soft, 2));
     spacer();
-    CLAY({.layout = {.sizing = {CLAY_SIZING_FIXED(gui_px(150))}, .childAlignment = {.x = CLAY_ALIGN_X_RIGHT}}}) {
+    CLAY({.layout = {.sizing = {CLAY_SIZING_FIXED(side)}, .childAlignment = {.x = CLAY_ALIGN_X_RIGHT}}}) {
       if (hint) label(hint, TAG, t->muted);
     }
   }
@@ -172,6 +173,13 @@ void hint_line(const GuiTheme *t, const GuiFrame *f, const char *s) {
   CLAY({.layout = {.sizing = {CLAY_SIZING_GROW(0)}, .padding = {0, 0, gui_px(8), 0}, .childAlignment = {.x = CLAY_ALIGN_X_CENTER}}}) {
     label(s, SMALL, t->muted);
   }
+}
+
+const char *hint_ok(const GuiFrame *f) { return f->ok_key ? f->ok_key : "Enter"; }
+const char *hint_back(const GuiFrame *f) { return f->back_key ? f->back_key : "Esc"; }
+
+const char *hint_of(const GuiFrame *f, const char *ok_verb, const char *back_verb) {
+  return gui_str("%s %s   %s %s", hint_ok(f), ok_verb, hint_back(f), back_verb).chars;
 }
 
 void paragraph(Clay_String s, float points, UiColor c, float top, float bottom) {

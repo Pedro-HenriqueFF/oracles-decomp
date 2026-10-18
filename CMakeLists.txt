@@ -112,7 +112,7 @@ if(ORACLES_SDL)
   endif()
 endif()
 
-add_library(oraclesui STATIC src/ui/ui.c src/ui/font_builtin.c src/ui/savefile.c src/ui/menu.c src/ui/settings.c src/ui/filter.c src/ui/controls.c src/ui/touch.c src/ui/syncui.c src/ui/home.c
+add_library(oraclesui STATIC src/ui/ui.c src/ui/font_builtin.c src/ui/savefile.c src/ui/menu.c src/ui/settings.c src/ui/filter.c src/ui/controls.c src/ui/touch.c src/ui/syncui.c src/ui/home.c src/ui/labels.c
   src/ui/upscale.cpp third_party/xbrz/xbrz.cpp third_party/hqx/hq2x.c third_party/hqx/hq3x.c)
 target_include_directories(oraclesui PUBLIC src PRIVATE third_party/xbrz third_party/hqx)
 # oraclesui carries C++ objects, so anything linking it links with the C++ driver.
@@ -121,7 +121,9 @@ set_target_properties(oraclesui PROPERTIES LINKER_LANGUAGE CXX)
 # pulls in framebuffer_to_rgb (and so the engine). Do not merge this back into oracleswide.
 add_library(oraclesitem STATIC src/wide/item.c)
 target_include_directories(oraclesitem PUBLIC src)
-add_library(oracleswide STATIC src/wide/wide.c src/wide/room.c src/wide/npcs.c)
+# hud.c calls wide_window_left, so it pulls in the engine too; split it out like oraclesitem if mods
+# or ui ever need hud_glyph.
+add_library(oracleswide STATIC src/wide/wide.c src/wide/room.c src/wide/hud.c src/wide/npcs.c)
 target_include_directories(oracleswide PUBLIC src)
 target_link_libraries(oracleswide PUBLIC oraclesitem)
 add_library(oraclessync STATIC src/sync/sha256.c src/sync/sync.c src/sync/http_common.c)
@@ -242,6 +244,9 @@ add_executable(test_wide tests/test_wide.c)
 target_link_libraries(test_wide oracleswide oraclesnative)
 target_compile_definitions(test_wide PRIVATE GAME_ROM_DIR="${GAME_ROM_DIR}" TAS_DIR="${CMAKE_SOURCE_DIR}/tas")
 add_test(NAME wide COMMAND test_wide)
+add_executable(test_hud tests/test_hud.c)
+target_link_libraries(test_hud oracleswide oraclesnative)
+add_test(NAME hud COMMAND test_hud)
 add_executable(test_rooms tests/test_rooms.c)
 target_link_libraries(test_rooms oraclesnative)
 target_compile_definitions(test_rooms PRIVATE GAME_ROM_DIR="${GAME_ROM_DIR}" TAS_DIR="${CMAKE_SOURCE_DIR}/tas")
