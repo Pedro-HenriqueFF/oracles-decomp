@@ -92,6 +92,26 @@ cmake --build build-win
 wine build-win/test_native_tas.exe
 ```
 
+Homebrew's mingw-w64 is posix-thread-model and links winpthreads implicitly; apt's, which CI
+installs, is win32-model and does not. So a symbol that only winpthreads provides (`clock_gettime`,
+as `clock_gettime64`) links here and fails there, and compiling each file with `-c` never sees it at
+all, since the symbol only has to exist at link time. The `windows-cross` ci job builds with the
+stricter toolchain on every branch push. Locally, intersect the undefined symbols in the archives
+with what libwinpthread defines -- toolchain-independent, needs no SDL and no exe, and prints
+nothing when nothing depends on winpthreads:
+
+```bash
+cmake -S . -B build-win -G Ninja -DORACLES_SDL=OFF -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x86_64.cmake
+cmake --build build-win
+WP=$(x86_64-w64-mingw32-gcc -print-file-name=libwinpthread.a)
+nm -g build-win/*.a | awk '$1=="U"{print $2}' | sort -u > /tmp/undef
+nm -g "$WP" | awk '$2=="T"{print $3}' | sort -u > /tmp/wp
+comm -12 /tmp/undef /tmp/wp
+```
+
+That configure takes a second (no vendored SDL to fetch or build), the archives about two minutes
+cold and under one second to rebuild one of them after an edit.
+
 ## The two apps
 
 Same game, two frontends:
@@ -156,6 +176,18 @@ The headless runner replays a movie and checks it:
 compares registers, memory and cycles. `--ref-check` compares the machine state every 60 frames with
 the hashes the pure interpreter (`--no-hooks`) recorded. `oracles-native-run` replays movies on the
 native build.
+
+Both runners end with a hook census on stderr: how many routines are hooked, how many entries they
+saw, and which saw none. That counter normally observes only the dispatcher, and a routine its ported
+callers enter directly (`CALL_C`, `TAIL`) never reaches the dispatcher -- so the list says "never
+dispatched", which is not evidence the routine never ran. `HOOKCENSUS=1` counts entries from ported C
+too, at a table lookup per call, and the list then names what really never ran; `--verify-shadow`
+counts them anyway. On a 4,000-frame Ages run the census goes from 162,317 entries to 728,900, and
+580 routines leave the never-ran list.
+
+`WRAMDUMP_AT=<first>-<last> WRAMDUMP_FILE=<path>` appends WRAM, HRAM, VRAM, OAM, IO and the palettes
+as hex for those movie frames. If what it writes looks dead, check the harness is where you think it
+is: `wRoomLayout` at `$cf00` cannot be zero in a loaded room.
 
 `test_wide` checks the widescreen renderer against the game through both TAS movies: the middle 160
 columns drawn its way equal the PPU's picture exactly, and what a side strip showed of the next room

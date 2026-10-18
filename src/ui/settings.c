@@ -19,6 +19,7 @@ void settings_default(Settings *s) {
   s->four_slots = false;
   s->haptics = true;
   s->pad_style = STYLE_AUTO;
+  s->portable = false;
   bindings_default(&s->bindings);
 }
 
@@ -69,7 +70,7 @@ void settings_menu_open(SettingsMenu *m, bool phone) {
 
 bool settings_row_shown(const SettingsMenu *m, SettingsRow r) {
   if (r == SET_HAPTICS) return m->phone;
-  if (r == SET_FULLSCREEN) return !m->phone;
+  if (r == SET_FULLSCREEN || r == SET_PORTABLE) return !m->phone;
   return true;
 }
 
@@ -104,6 +105,7 @@ MenuAction settings_press(SettingsMenu *m, Settings *s, UiButton b, SettingsRow 
   case SET_FOUR_SLOTS: if (dir) s->four_slots = !s->four_slots; break;
   case SET_HAPTICS: if (dir) s->haptics = !s->haptics; break;
   case SET_PAD_STYLE: s->pad_style = (PadStyle)((s->pad_style + dir + STYLES) % STYLES); break;
+  case SET_PORTABLE: if (dir) s->portable = !s->portable; break;
   default: break;
   }
   return MENU_NONE;

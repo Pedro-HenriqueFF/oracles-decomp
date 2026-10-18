@@ -42,6 +42,7 @@
 #include "wide/wide.h"
 #include "wide/hud.h"
 #include "ui/labels.h"
+#include "wide/npcs.h"
 #include "mods/mods.h"
 #include <stdio.h>
 #include <time.h>
@@ -295,7 +296,36 @@ static bool slot_load(GB *gb, const char *dir, int slot) {
   slot_path(path, sizeof path, dir, slot, "");
   if (!oracles_load_boot_state(gb, path)) return false;
   fibers_reset(gb);
+  wide_npcs_reset();
   return true;
+}
+
+// The copies of the game that walk into the rooms beside the screen (wide/npcs.h) run here, so
+// the game never waits for one.
+static SDL_Semaphore *npcs_wake;
+
+static int npcs_thread(void *arg) {
+  (void)arg;
+  SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_LOW);
+  for (;;) {
+    SDL_WaitSemaphore(npcs_wake);
+    wide_npcs_work();
+  }
+  return 0;
+}
+
+static void npcs_signal(void) {
+  if (!npcs_wake) {
+    npcs_wake = SDL_CreateSemaphore(0);
+    // the copy's kernel runs on this stack as the game's does on the main thread's
+    SDL_PropertiesID props = SDL_CreateProperties();
+    SDL_SetPointerProperty(props, SDL_PROP_THREAD_CREATE_ENTRY_FUNCTION_POINTER, (void *)npcs_thread);
+    SDL_SetStringProperty(props, SDL_PROP_THREAD_CREATE_NAME_STRING, "npcs");
+    SDL_SetNumberProperty(props, SDL_PROP_THREAD_CREATE_STACKSIZE_NUMBER, 8 << 20);
+    SDL_DetachThread(SDL_CreateThreadWithProperties(props));
+    SDL_DestroyProperties(props);
+  }
+  SDL_SignalSemaphore(npcs_wake);
 }
 
 // A state file's time and thumbnail (black when it has none).
@@ -335,6 +365,98 @@ static void settings_store(void) {
   write_file(settings_path, text, (size_t)n);
 }
 
+// Portable mode: portable.txt beside the app (beside Oracles.app on a Mac, whose bundle must stay
+// unmodified) keeps the data in oracles-data/ there instead of the user's app-data folder.
+static bool portable_dir(char *out, size_t size) {
+#ifdef __ANDROID__
+  (void)out; (void)size;
+  return false;
+#else
+  // an AppImage runs from a read-only mount; APPIMAGE is the file itself
+  const char *appimage = getenv("APPIMAGE");
+  if (appimage && strrchr(appimage, '/')) {
+    snprintf(out, size, "%.*s", (int)(strrchr(appimage, '/') - appimage + 1), appimage);
+    return true;
+  }
+  const char *base = SDL_GetBasePath();
+  if (!base) return false;
+  snprintf(out, size, "%s", base);
+  char *bundle = strstr(out, ".app/Contents/");
+  if (bundle) { *bundle = 0; char *slash = strrchr(out, '/'); if (slash) slash[1] = 0; }
+  return true;
+#endif
+}
+
+static bool portable_marker(char *out, size_t size) {
+  char dir[1024];
+  if (!portable_dir(dir, sizeof dir)) return false;
+  snprintf(out, size, "%sportable.txt", dir);
+  return true;
+}
+
+static bool portable_marked(void) {
+  char marker[1100];
+  return portable_marker(marker, sizeof marker) && file_exists(marker);
+}
+
+static SDL_EnumerationResult SDLCALL any_entry(void *found, const char *dir, const char *name) {
+  (void)dir; (void)name;
+  *(bool *)found = true;
+  return SDL_ENUM_SUCCESS;
+}
+
+static bool dir_empty(const char *dir) {
+  bool found = false;
+  SDL_EnumerateDirectory(dir, any_entry, &found);
+  return !found;
+}
+
+static bool copy_tree(const char *from, const char *to);
+
+static SDL_EnumerationResult SDLCALL copy_entry(void *to, const char *dir, const char *name) {
+  char src[1100], dst[1100];
+  SDL_PathInfo info;
+  snprintf(src, sizeof src, "%s%s", dir, name);
+  snprintf(dst, sizeof dst, "%s%s", (const char *)to, name);
+  if (!SDL_GetPathInfo(src, &info)) return SDL_ENUM_FAILURE;
+  if (info.type == SDL_PATHTYPE_DIRECTORY) {
+    strcat(src, "/");
+    strcat(dst, "/");
+    return copy_tree(src, dst) ? SDL_ENUM_CONTINUE : SDL_ENUM_FAILURE;
+  }
+  return SDL_CopyFile(src, dst) ? SDL_ENUM_CONTINUE : SDL_ENUM_FAILURE;
+}
+
+static bool copy_tree(const char *from, const char *to) {
+  return SDL_CreateDirectory(to) && SDL_EnumerateDirectory(from, copy_entry, (void *)to);
+}
+
+// The data folder for this run, with pref the user's app-data folder. On the first run after Portable
+// is switched on or off, the folder it switches to gets a copy of the other one, unless it already
+// holds something: nothing is ever overwritten, and the old folder stays as it was.
+static void data_folder(char *cache, size_t size, const char *pref) {
+  char dir[1024], portable[1100];
+  snprintf(cache, size, "%s", pref);
+  if (!portable_dir(dir, sizeof dir)) return;
+  snprintf(portable, sizeof portable, "%soracles-data/", dir);
+  bool on = portable_marked();
+  const char *from = on ? pref : portable;
+  if (on) snprintf(cache, size, "%s", portable);
+  bool copied = true;
+  if (file_exists(from) && !dir_empty(from) && (!file_exists(cache) || dir_empty(cache))) {
+    char dest[1100], part[1110], part_dir[1120];
+    snprintf(dest, sizeof dest, "%.*s", (int)strlen(cache) - 1, cache);
+    snprintf(part, sizeof part, "%s.part", dest);
+    snprintf(part_dir, sizeof part_dir, "%s/", part);
+    SDL_RemovePath(dest);
+    copied = copy_tree(from, part_dir) && SDL_RenamePath(part, dest);
+  }
+  if (!copied || !SDL_CreateDirectory(cache)) {
+    fprintf(stderr, "could not set up %s: %s\n", cache, SDL_GetError());
+    snprintf(cache, size, "%s", pref);
+  }
+}
+
 static void apply_window_settings(SDL_Window *win) {
 #ifdef __ANDROID__
   settings.fullscreen = true;
@@ -360,11 +482,13 @@ static float volume_gain(bool muted) { return muted ? 0.0f : settings.volume / 1
 // A message shown over the screen for two seconds (state saved, item set, ...).
 static char toast[40];
 static uint64_t toast_until;
-static bool toast_undo, undo_tapped;        // the message offers Undo; it was tapped
+static const char *toast_action;            // the message's button (Undo, Restart), or NULL
+static bool undo_tapped, restart_tapped;
 static void show_status(const char *msg) {
   snprintf(toast, sizeof toast, "%s", msg);
   toast_until = SDL_GetTicks() + 2000;
-  toast_undo = undo_tapped = false;
+  toast_action = NULL;
+  undo_tapped = false;
 }
 
 // While set, the wait shown over everything (a sync the player has to wait for); it replaces the message.
@@ -374,7 +498,18 @@ static const char *waiting;
 static void show_undoable(const char *msg) {
   show_status(msg);
   toast_until = SDL_GetTicks() + 4000;
-  toast_undo = true;
+  toast_action = "Undo";
+}
+
+// The Portable row writes or removes portable.txt; the data folder follows on the next start.
+static void portable_switched(void) {
+  char marker[1100];
+  if (!portable_marker(marker, sizeof marker)) return;
+  bool ok = settings.portable ? write_file(marker, "", 0) : SDL_RemovePath(marker);
+  if (!ok) { settings.portable = !settings.portable; show_status("Can't write beside the app"); return; }
+  show_status("Restart to change folder");
+  toast_until = SDL_GetTicks() + 8000;
+  toast_action = "Restart";
 }
 
 static void apply_game_settings(void) {
@@ -632,7 +767,10 @@ static void present_frame(SDL_Renderer *ren, const uint8_t *rgb, int pic_w) {
     if (ui_layer) ui_layer(&f);
     else gui_begin(gui_display_scale());
     if (waiting) gui_wait(waiting, SDL_GetTicks(), &gui_t, &f);
-    else if (toast_on && gui_toast(toast, toast_undo, &gui_t, &f)) undo_tapped = true;
+    else if (toast_on && gui_toast(toast, toast_action, &gui_t, &f)) {
+      if (toast_action && !strcmp(toast_action, "Restart")) { restart_tapped = true; SDL_PushEvent(&(SDL_Event){.type = SDL_EVENT_QUIT}); }
+      else undo_tapped = true;
+    }
     gui_end();
     if (gui_take_tap() && settings.haptics) haptic_tick();
   } else gui_none();
@@ -674,7 +812,7 @@ static void show_game(SDL_Renderer *ren, const GBSample *sample, const uint8_t *
   // The X and Y items go in the space widescreen adds beside the status bar, or in the narrow
   // picture's side bars when they are wide enough; the game has nowhere to put them.
   WideOptions o = {seasons, settings.dim_sides, {overlay_theme.bg.r, overlay_theme.bg.g, overlay_theme.bg.b}, rom, rom_size,
-                   settings.four_slots, {features.slot_item[0], features.slot_item[1]}, {0}};
+                   settings.four_slots, {features.slot_item[0], features.slot_item[1]}, wide_npcs_room, {0}};
   hud_glyphs(o.glyph);
   if (!settings.widescreen) {
     memcpy(pic, rgb, FB_W * FB_H * 3);
@@ -991,8 +1129,9 @@ static bool run_settings_page(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *t
       UiButton b;
       if (!menu_button(&ev, &b)) continue;
       SettingsRow row;
-      bool was_full = settings.fullscreen, was_wide = settings.widescreen;
+      bool was_full = settings.fullscreen, was_wide = settings.widescreen, was_portable = settings.portable;
       MenuAction a = settings_press(&m, &settings, b, &row);
+      if (settings.portable != was_portable) portable_switched();
       if (a == MENU_BACK) { settings_store(); return true; }
       if (a == MENU_PICK && row == SET_CONTROLS && !run_controls(win, ren, tex, game_rgb)) return false;
       if (a == MENU_PICK && row == SET_SYNC && !run_sync(win, ren, tex, game_rgb)) return false;
@@ -1038,6 +1177,7 @@ static void settings_reload(SDL_Window *win) {
   char *z = text ? realloc(text, n + 1) : NULL;
   if (z) { z[n] = 0; settings_parse(&settings, z); free(z); } else free(text);
   sync_label_update();
+  settings.portable = portable_marked();
   apply_window_settings(win);
   apply_game_settings();
 }
@@ -1308,8 +1448,9 @@ static bool run_home(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, const
       if (r.action == LAUNCH_QUIT) return false;
       if (r.action == LAUNCH_SETTINGS) {
         SettingsRow row;
-        bool was_full = settings.fullscreen, was_wide = settings.widescreen;
+        bool was_full = settings.fullscreen, was_wide = settings.widescreen, was_portable = settings.portable;
         MenuAction sa = settings_press(&settings_menu, &settings, r.button, &row);
+        if (settings.portable != was_portable) portable_switched();
         if (sa == MENU_PICK && row == SET_CONTROLS && !run_controls(win, ren, tex, NULL)) return false;
         if (sa == MENU_PICK && row == SET_SYNC) {
           if (!run_sync(win, ren, tex, NULL)) return false;
@@ -1506,6 +1647,7 @@ static GameEnd run_game(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, co
   gb->code_bits = assets_code_bits(rom, rom_size);
 #endif
   gb_reset(gb);
+  wide_npcs_reset();
   char sav[1300];
   snprintf(sav, sizeof sav, "%s/sram.sav", dir);
   load_sram(gb, sav);
@@ -1710,6 +1852,8 @@ static GameEnd run_game(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, co
       frames++;
     }
 
+    if (settings.widescreen && mode == MODE_PLAY && boot.phase == BOOT_OFF && wide_npcs_update(gb)) npcs_signal();
+
     // pausing and quitting wait for a frame the state can be saved at
     if (mode == MODE_PAUSING || mode == MODE_QUITTING) {
       parked = threads_parked(gb);
@@ -1760,6 +1904,7 @@ static GameEnd run_game(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, co
   // launcher is shown again, and the next run_game re-inits for whichever game is actually picked.
   mods_shutdown();
   paused_game.gb = NULL;
+  wide_npcs_stop();
   free(gb); free(rom); free(tab);
   return end;
 }
@@ -1814,7 +1959,7 @@ int main(int argc, char **argv) {
   SDL_AddEventWatch(on_app_event, NULL);
   char cache[1024];
   if (cache_arg) snprintf(cache, sizeof cache, "%s%s", cache_arg, cache_arg[strlen(cache_arg) - 1] == '/' ? "" : "/");
-  else { char *p = SDL_GetPrefPath("oracles-decomp", "oracles"); if (!p) { fprintf(stderr, "%s\n", SDL_GetError()); return 2; } snprintf(cache, sizeof cache, "%s", p); SDL_free(p); }
+  else { char *p = SDL_GetPrefPath("oracles-decomp", "oracles"); if (!p) { fprintf(stderr, "%s\n", SDL_GetError()); return 2; } data_folder(cache, sizeof cache, p); SDL_free(p); }
   SDL_CreateDirectory(cache);
 
   SDL_Window *win;
@@ -1882,6 +2027,8 @@ int main(int argc, char **argv) {
   if (!sync_wait(20000)) fprintf(stderr, "sync still running at exit\n");
   mods_shutdown();
   oracles_close_window(win, window_size);
+  // Restart (after Portable changed): the quit above saved everything; the new run opens the other folder
+  if (restart_tapped && !SDL_CreateProcess((const char *const *)argv, false)) fprintf(stderr, "could not restart: %s\n", SDL_GetError());
   SDL_Quit();
   return status;
 }

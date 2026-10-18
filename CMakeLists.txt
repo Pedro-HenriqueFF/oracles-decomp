@@ -123,7 +123,7 @@ add_library(oraclesitem STATIC src/wide/item.c)
 target_include_directories(oraclesitem PUBLIC src)
 # hud.c calls wide_window_left, so it pulls in the engine too; split it out like oraclesitem if mods
 # or ui ever need hud_glyph.
-add_library(oracleswide STATIC src/wide/wide.c src/wide/room.c src/wide/hud.c)
+add_library(oracleswide STATIC src/wide/wide.c src/wide/room.c src/wide/hud.c src/wide/npcs.c)
 target_include_directories(oracleswide PUBLIC src)
 target_link_libraries(oracleswide PUBLIC oraclesitem)
 add_library(oraclessync STATIC src/sync/sha256.c src/sync/sync.c src/sync/http_common.c)

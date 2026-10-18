@@ -1,6 +1,7 @@
 #include "game/game.h"
 #include "rt/fibers.h"
 #include "game/gen.h"
+#include "game/offscreen.h"
 void s_seasonsFunc_2678_hook(GB *gb);
 
 static void thread_yield(GB *gb);
@@ -11747,6 +11748,7 @@ static void draw_all_sprites_unconditionally(GB *gb) {
     CYC(b_+O(124), b_+OE(125)); A = mem_rd(gb, HL); SET_HL(HL + 1);
     CYC(b_+O(125), b_+OE(127)); H8(hFF93) = A;
   }
+  offscreen_sprites_capture(gb);
   SET_HL(wObjectsToDraw);
   CYC(b_+O(127), b_+OE(130));
   for (;;) {
@@ -11809,6 +11811,7 @@ static void draw_all_sprites_unconditionally(GB *gb) {
       break;
     }
   }
+  offscreen_sprites_commit(gb);
   if (!game_seasons) {
     CYC(b_+190, b_+193); A = W8(wLinkRaisedFloorOffset);
     alu_cpl(gb);
@@ -12878,7 +12881,6 @@ void parseGivenObjectData_b00_hook(GB *gb) {
 // frames at once, which leaves the parse returning with a stack CALL_C does not recognise, so it
 // hands off here and the native build needs a hook at the address.
 void parseGivenObjectData_b00__afterCall3181_hook(GB *gb) {
-  BASE(parseGivenObjectData_b00);
   parse_given_object_data_b00_restore(gb);
 }
 
@@ -14006,7 +14008,7 @@ static void thread_resume_pops(GB *gb) {
 // from the thread unwinds the kernel to the dispatcher at the address the thread chose.
 // A thread without a fiber (a loaded state) resumes from its saved stack: a new fiber starts at
 // the ROM code after `ld sp,hl`, which pops its registers and returns into it.
-static uint16_t thread_resume_pc;
+static _Thread_local uint16_t thread_resume_pc;
 static void thread_resume(GB *gb) {
   cpu_set_pc(gb, thread_resume_pc);
   for (;;) {
