@@ -4,7 +4,7 @@
 static const char *const filter_labels[FILTERS] = {"Sharp", "Lines", "LCD", "CRT", "xBRZ", "HQX"};
 static const char *const pad_style_labels[STYLES] = {"Auto", "Nintendo", "Xbox", "PlayStation"};
 static const char *const setting_labels[SET_ROWS] = {"Volume", "Screen", "Scale", "Widescreen", "Dim sides", "Colours", "Fullscreen",
-                                                     "Fast text", "Fast menus", "Quick swap", "Item X/Y buttons", "Vibration", "Controls", "Controller style", "Save sync"};
+                                                     "Fast text", "Fast menus", "Quick swap", "Item X/Y buttons", "Vibration", "Controls", "Pad button names", "Save sync"};
 
 static const char *section_before(int r) {
   switch (r) {
