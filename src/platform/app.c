@@ -644,46 +644,56 @@ static void hud_glyphs(uint8_t g[4]) {
   for (int i = 0; i < HUD_SLOTS; i++) g[i] = hud_slot_glyph(d, style, &settings.bindings, (HudSlot)i);
 }
 
-// A game frame: in widescreen the room around the camera fills the sides (the message stays centred).
-static void present_game(SDL_Renderer *ren, SDL_Texture *tex, const GBSample *sample, const uint8_t *rgb, bool seasons, const uint8_t *rom, size_t rom_size) {
+// The game's picture as shown: in widescreen the room around the camera fills the sides (the
+// message stays centred), the status bar names the buttons in use and the mods' overlay is on top.
+// rgb itself is left as the game drew it.
+static void show_game(SDL_Renderer *ren, const GBSample *sample, const uint8_t *rgb, bool seasons, const uint8_t *rom, size_t rom_size) {
+  static uint8_t pic[WIDE_W * FB_H * 3];
+  int w = settings.widescreen ? WIDE_W : FB_W;
+  if (!settings.widescreen) {
+    uint8_t g[4];
+    hud_glyphs(g);
+    memcpy(pic, rgb, FB_W * FB_H * 3);
+    hud_relabel(sample, g[HUD_B], g[HUD_A], pic);
+  } else {
+    // The X and Y items go in the space widescreen adds beside the status bar; the game has nowhere
+    // to put them, so without the wider picture there is no room to show them in.
+    WideOptions o = {seasons, settings.dim_sides, {overlay_theme.bg.r, overlay_theme.bg.g, overlay_theme.bg.b}, rom, rom_size,
+                     settings.four_slots, {features.slot_item[0], features.slot_item[1]}, {0}};
+    hud_glyphs(o.glyph);
+    wide_render(sample, &o, pic);
+  }
+  // the overlay was drawn for the width the mods last saw, which a paused game can have changed since
+  const ModOverlay *ov = mods_overlay();
+  if (ov->width == w)
+    for (int y = 0; y < FB_H; y++)
+      for (int x = 0; x < w; x++)
+        if (overlay_cover_at(ov, x, y)) memcpy(pic + ((size_t)y * w + x) * 3, overlay_rgb_at(ov, x, y), 3);
+  present_frame(ren, pic, w);
+}
+
+// The running game's paused picture: menus drawn over it show it as the game frame it was.
+static struct { const uint8_t *rgb; const GB *gb; bool seasons; const uint8_t *rom; size_t rom_size; } paused_game;
+
+// A game frame.
+static void present_game(SDL_Renderer *ren, const GBSample *sample, const uint8_t *rgb, bool seasons, const uint8_t *rom, size_t rom_size) {
   // Mods draw before the filters, so an overlay scales with the picture and takes the chosen
-  // filter rather than sitting on top of it looking sharp. Run once here, above the
-  // widescreen/narrow split below, rather than only after wide_render: the non-widescreen branch
-  // returns through present() before ever reaching wide_render, so a mod would never run for the
-  // (common) non-widescreen case if this were placed after it instead.
+  // filter rather than sitting on top of it looking sharp. Run here, before the widescreen/narrow
+  // split in show_game, so a mod runs in both.
   ModsFrame mf = {sample->wram[0], sample->hram, seasons, settings.widescreen ? WIDE_W : FB_W,
                   rd_room(sample, seasons), rom, rom_size, &mod_font};
   mods_frame(&mf);
-  const ModOverlay *ov = mods_overlay();
-
-  if (!settings.widescreen) {
-    uint8_t *pic = (uint8_t *)rgb;
-    uint8_t g[4];
-    hud_glyphs(g);
-    hud_relabel(sample, g[HUD_B], g[HUD_A], pic);
-    for (int y = 0; y < FB_H; y++)
-      for (int x = 0; x < ov->width; x++)
-        if (overlay_cover_at(ov, x, y)) memcpy(pic + ((size_t)y * ov->width + x) * 3, overlay_rgb_at(ov, x, y), 3);
-    present(ren, tex, rgb);
-    return;
-  }
-  static uint8_t wide[WIDE_W * FB_H * 3];
-  // The X and Y items go in the space widescreen adds beside the status bar; the game has nowhere to
-  // put them, so without the wider picture there is no room to show them in.
-  WideOptions o = {seasons, settings.dim_sides, {overlay_theme.bg.r, overlay_theme.bg.g, overlay_theme.bg.b}, rom, rom_size,
-                   settings.four_slots, {features.slot_item[0], features.slot_item[1]}, {0}};
-  hud_glyphs(o.glyph);
-  wide_render(sample, &o, wide);
-  for (int y = 0; y < FB_H; y++)
-    for (int x = 0; x < ov->width; x++)
-      if (overlay_cover_at(ov, x, y)) memcpy(wide + ((size_t)y * ov->width + x) * 3, overlay_rgb_at(ov, x, y), 3);
-  present_frame(ren, wide, WIDE_W);
+  show_game(ren, sample, rgb, seasons, rom, rom_size);
 }
 
 // A 160-wide picture (a menu, or the game where the sides are not drawn): with the current message,
 // and in widescreen centred on the theme's border colour.
 static void present(SDL_Renderer *ren, SDL_Texture *tex, const uint8_t *rgb) {
   (void)tex;
+  if (paused_game.gb && paused_game.gb->sample && rgb == paused_game.rgb) {
+    show_game(ren, paused_game.gb->sample, rgb, paused_game.seasons, paused_game.rom, paused_game.rom_size);
+    return;
+  }
   if (!settings.widescreen) { present_frame(ren, rgb, FB_W); return; }
   static uint8_t wide[WIDE_W * FB_H * 3];
   const int side = (WIDE_W - FB_W) / 2;
@@ -1520,6 +1530,11 @@ static GameEnd run_game(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, co
   }
   framebuffer_to_rgb(gb->sample ? gb->sample->framebuffer : gb->framebuffer, rgb);
   session = (Session){gb, dir, sav, paused_rgb, &mode, &parked, false, &frames, gs->game};
+  paused_game.rgb = paused_rgb;
+  paused_game.gb = gb;
+  paused_game.seasons = !ages;
+  paused_game.rom = rom;
+  paused_game.rom_size = rom_size;
   playing = gs->game;
 
   for (bool running = true; running && !gb->hung;) {
@@ -1696,7 +1711,7 @@ static GameEnd run_game(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, co
     uint32_t n = apu_read_samples(&gb->apu, samples, APU_RING);
     if (audio && mode == MODE_PLAY) SDL_PutAudioStreamData(audio, samples, n * 4);
     framebuffer_to_rgb(gb->sample->framebuffer, rgb);
-    present_game(ren, tex, gb->sample, rgb, !ages, rom, rom_size);
+    present_game(ren, gb->sample, rgb, !ages, rom, rom_size);
     for (int i = 0; i < mod_count; i++) {
       bool now = mods_enabled(i);
       if (mod_was_enabled[i] && !now) show_status("Mod disabled");
@@ -1720,6 +1735,7 @@ static GameEnd run_game(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, co
   // entirely if the player picks one next. main()'s loop re-scans game-agnostically before the
   // launcher is shown again, and the next run_game re-inits for whichever game is actually picked.
   mods_shutdown();
+  paused_game.gb = NULL;
   free(gb); free(rom); free(tab);
   return end;
 }
