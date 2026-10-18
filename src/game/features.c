@@ -39,7 +39,8 @@ bool features_assign_slot(GB *gb, int slot) {
 }
 
 static int held_slot = -1;
-static uint8_t held_b;
+static uint16_t held_addr;
+static uint8_t held_prev;
 static bool held_refresh;                // the press redrew the bar, so the release must too
 
 static bool in_storage(GB *gb, uint8_t item) {
@@ -54,20 +55,24 @@ uint8_t features_slot_press(GB *gb, int slot) {
   if (item == W8(wInventoryB)) return JOY_B;
   if (item == W8(wInventoryA)) return JOY_A;
   if (!can_change_items(gb) || !in_storage(gb, item)) return 0;
+  // Ages' underwater rooms only read A (B is the swim kick), so the item borrows A there
+  uint8_t flags = W8(wTilesetFlags);
+  bool underwater = !game_seasons && (flags & 0x40) && !(flags & 0x20);
   held_slot = slot;
-  held_b = W8(wInventoryB);
-  W8(wInventoryB) = item;
+  held_addr = underwater ? wInventoryA : wInventoryB;
+  held_prev = mem_rd(gb, held_addr);
+  mem_wr(gb, held_addr, item);
   // Only redraw the bar when the item has nowhere else to be seen: with the X and Y boxes on screen
   // the player can already see what they pressed, and the B box should keep its own item.
   held_refresh = !features.slot_boxes;
   if (held_refresh) W8(wStatusBarNeedsRefresh) |= 0x01;
-  return JOY_B;
+  return underwater ? JOY_A : JOY_B;
 }
 
 void features_slot_release(GB *gb, int slot) {
   if (held_slot != slot) return;
   held_slot = -1;
-  if (W8(wInventoryB) != features.slot_item[slot]) return;
-  W8(wInventoryB) = held_b;
+  if (mem_rd(gb, held_addr) != features.slot_item[slot]) return;
+  mem_wr(gb, held_addr, held_prev);
   if (held_refresh) W8(wStatusBarNeedsRefresh) |= 0x01;
 }
