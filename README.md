@@ -92,6 +92,11 @@ Settings > CONTROLS: pick a row, then press the key or controller button (trigge
 want for it. Quick swap and the item buttons only do something once their gameplay toggles are on.
 The window resizes in whole-pixel steps.
 
+The status bar, the item boxes and the menu hints name the key or controller button each action is
+bound to, and switch between keyboard and controller as you use them. Settings > Pad button names
+picks how a controller's buttons are named: Auto follows the connected pad (Xbox for anything it
+doesn't recognise), or choose Nintendo (the Game Boy's own B and A), Xbox or PlayStation.
+
 ### Settings
 
 From the launcher or the pause menu: volume, screen filter (sharp, scanlines, LCD grid, CRT, and the
@@ -106,7 +111,8 @@ There are also quality-of-life toggles, **all off by default**:
 - **Quick swap**: `C` swaps the A and B items
 - **4 slots**: `A`/`S` become two more item buttons — highlight an item in the inventory and press
   one to assign it, then hold it in play to use that item. In widescreen they get their own X and Y
-  boxes at the left of the status bar, so all four items are on screen at once
+  boxes at the left of the status bar, so all four items are on screen at once; without widescreen
+  the boxes go in the black bars either side of the picture when the window is wide enough
 
 ### Save states
 
