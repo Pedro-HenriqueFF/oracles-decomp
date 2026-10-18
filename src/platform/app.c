@@ -382,9 +382,6 @@ static void apply_game_settings(void) {
   features.quick_swap = settings.quick_swap;
   features.fast_menus = settings.fast_menus;
   features.four_slots = settings.four_slots;
-  // With the boxes on screen the B box must keep showing the B item, so holding X or Y should not
-  // repaint it with the item it lends to the B slot.
-  features.slot_boxes = settings.four_slots && settings.widescreen;
 }
 
 // The items on X and Y, per game: two bytes in item_buttons.
@@ -557,11 +554,44 @@ static void shot_if_due(SDL_Renderer *ren) {
   }
 }
 
+// A picture's textures: straight to the screen, or through the filter at an integer scale first.
+typedef struct { SDL_Texture *direct, *big; int direct_w, big_scale, big_w; uint8_t *buf; } PicTextures;
+
+static void draw_pic(SDL_Renderer *ren, PicTextures *t, const uint8_t *rgb, int pic_w, int scale, bool fractional, ScreenFilter filter,
+                     const SDL_FRect *dst) {
+  if (!fractional && (filter == FILTER_SHARP || scale < 2) && !settings.gbc_colours) {
+    if (!t->direct || t->direct_w != pic_w) {
+      if (t->direct) SDL_DestroyTexture(t->direct);
+      t->direct = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, pic_w, FB_H);
+      SDL_SetTextureScaleMode(t->direct, SDL_SCALEMODE_NEAREST);
+      t->direct_w = pic_w;
+    }
+    SDL_UpdateTexture(t->direct, NULL, rgb, pic_w * 3);
+    SDL_RenderTexture(ren, t->direct, NULL, dst);
+    return;
+  }
+  if (!t->big || t->big_scale != scale || t->big_w != pic_w) {
+    if (t->big) SDL_DestroyTexture(t->big);
+    t->big = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, pic_w * scale, FB_H * scale);
+    free(t->buf);
+    t->buf = malloc((size_t)pic_w * scale * FB_H * scale * 3);
+    t->big_scale = scale;
+    t->big_w = pic_w;
+  }
+  SDL_SetTextureScaleMode(t->big, fractional ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
+  ui_filter(rgb, pic_w, settings.gbc_colours, scale < 2 ? FILTER_SHARP : filter, scale, t->buf);
+  SDL_UpdateTexture(t->big, NULL, t->buf, pic_w * scale * 3);
+  SDL_RenderTexture(ren, t->big, NULL, dst);
+}
+
+// Item X and Y beside the narrow picture, set by show_game for the frame it presents: the boxes
+// where they fit, else the narrow strips; strips_shown says whether the last frame had the room.
+static const uint8_t *box_rgb[2], *strip_rgb[2];
+static bool strips_shown;
+
 // Draws a picture pic_w (160 or WIDE_W) x 144 at the layout's place and scale, then the overlay.
 static void present_frame(SDL_Renderer *ren, const uint8_t *rgb, int pic_w) {
-  static SDL_Texture *direct, *big;
-  static int direct_w, big_scale, big_w;
-  static uint8_t *buf;
+  static PicTextures pic, strip[2];
   int w = pic_w, h = FB_H;
   SDL_GetCurrentRenderOutputSize(ren, &w, &h);
   SDL_Rect safe = {0, 0, w, h};
@@ -579,28 +609,19 @@ static void present_frame(SDL_Renderer *ren, const uint8_t *rgb, int pic_w) {
   SDL_RenderClear(ren);
   SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
   if (touch_on) SDL_RenderFillRect(ren, &dst);
-  if (!fractional && (settings.filter == FILTER_SHARP || scale < 2) && !settings.gbc_colours) {
-    if (!direct || direct_w != pic_w) {
-      if (direct) SDL_DestroyTexture(direct);
-      direct = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, pic_w, FB_H);
-      SDL_SetTextureScaleMode(direct, SDL_SCALEMODE_NEAREST);
-      direct_w = pic_w;
-    }
-    SDL_UpdateTexture(direct, NULL, rgb, pic_w * 3);
-    SDL_RenderTexture(ren, direct, NULL, &dst);
-  } else {
-    if (!big || big_scale != scale || big_w != pic_w) {
-      if (big) SDL_DestroyTexture(big);
-      big = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, pic_w * scale, FB_H * scale);
-      free(buf);
-      buf = malloc((size_t)pic_w * scale * FB_H * scale * 3);
-      big_scale = scale;
-      big_w = pic_w;
-    }
-    SDL_SetTextureScaleMode(big, fractional ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
-    ui_filter(rgb, pic_w, settings.gbc_colours, scale < 2 ? FILTER_SHARP : settings.filter, scale, buf);
-    SDL_UpdateTexture(big, NULL, buf, pic_w * scale * 3);
-    SDL_RenderTexture(ren, big, NULL, &dst);
+  draw_pic(ren, &pic, rgb, pic_w, scale, fractional, settings.filter, &dst);
+  strips_shown = false;
+  for (int k = 0; k < 2 && !strips_shown && strip_rgb[0] && pic_w == FB_W && !touch_on; k++) {
+    const uint8_t *const *src = k ? strip_rgb : box_rgb;
+    int sw_px = k ? WIDE_STRIP_W : WIDE_BOX_W;
+    float sw = dst.w * sw_px / pic_w;
+    SDL_FRect left = {dst.x - sw, dst.y, sw, dst.h}, right = {dst.x + dst.w, dst.y, sw, dst.h};
+    if (left.x < safe.x || right.x + sw > safe.x + safe.w) continue;
+    // CRT bends and darkens a picture towards its own edges, which on a strip this narrow is all of it
+    ScreenFilter f = settings.filter == FILTER_CRT ? FILTER_SHARP : settings.filter;
+    draw_pic(ren, &strip[0], src[0], sw_px, scale, fractional, f, &left);
+    draw_pic(ren, &strip[1], src[1], sw_px, scale, fractional, f, &right);
+    strips_shown = true;
   }
   if (touch_on && !overlay_blocked) gui_pad(&layout, touch_held, &gui_t);
   bool toast_on = toast[0] && SDL_GetTicks() < toast_until;
@@ -648,21 +669,20 @@ static void hud_glyphs(uint8_t g[4]) {
 // message stays centred), the status bar names the buttons in use and the mods' overlay is on top.
 // rgb itself is left as the game drew it.
 static void show_game(SDL_Renderer *ren, const GBSample *sample, const uint8_t *rgb, bool seasons, const uint8_t *rom, size_t rom_size) {
-  static uint8_t pic[WIDE_W * FB_H * 3];
+  static uint8_t pic[WIDE_W * FB_H * 3], boxes[2][WIDE_BOX_W * FB_H * 3], strips[2][WIDE_STRIP_W * FB_H * 3];
   int w = settings.widescreen ? WIDE_W : FB_W;
+  // The X and Y items go in the space widescreen adds beside the status bar, or in the narrow
+  // picture's side bars when they are wide enough; the game has nowhere to put them.
+  WideOptions o = {seasons, settings.dim_sides, {overlay_theme.bg.r, overlay_theme.bg.g, overlay_theme.bg.b}, rom, rom_size,
+                   settings.four_slots, {features.slot_item[0], features.slot_item[1]}, {0}};
+  hud_glyphs(o.glyph);
   if (!settings.widescreen) {
-    uint8_t g[4];
-    hud_glyphs(g);
     memcpy(pic, rgb, FB_W * FB_H * 3);
-    hud_relabel(sample, g[HUD_B], g[HUD_A], pic);
-  } else {
-    // The X and Y items go in the space widescreen adds beside the status bar; the game has nowhere
-    // to put them, so without the wider picture there is no room to show them in.
-    WideOptions o = {seasons, settings.dim_sides, {overlay_theme.bg.r, overlay_theme.bg.g, overlay_theme.bg.b}, rom, rom_size,
-                     settings.four_slots, {features.slot_item[0], features.slot_item[1]}, {0}};
-    hud_glyphs(o.glyph);
-    wide_render(sample, &o, pic);
-  }
+    hud_relabel(sample, o.glyph[HUD_B], o.glyph[HUD_A], pic);
+    if (wide_slot_strip(sample, &o, 0, true, boxes[0]) && wide_slot_strip(sample, &o, 1, true, boxes[1]) &&
+        wide_slot_strip(sample, &o, 0, false, strips[0]) && wide_slot_strip(sample, &o, 1, false, strips[1]))
+      for (int i = 0; i < 2; i++) { box_rgb[i] = boxes[i]; strip_rgb[i] = strips[i]; }
+  } else wide_render(sample, &o, pic);
   // the overlay was drawn for the width the mods last saw, which a paused game can have changed since
   const ModOverlay *ov = mods_overlay();
   if (ov->width == w)
@@ -670,6 +690,10 @@ static void show_game(SDL_Renderer *ren, const GBSample *sample, const uint8_t *
       for (int x = 0; x < w; x++)
         if (overlay_cover_at(ov, x, y)) memcpy(pic + ((size_t)y * w + x) * 3, overlay_rgb_at(ov, x, y), 3);
   present_frame(ren, pic, w);
+  box_rgb[0] = box_rgb[1] = strip_rgb[0] = strip_rgb[1] = NULL;
+  // With the boxes on screen the B box must keep showing the B item, so holding X or Y should not
+  // repaint it with the item it lends to the B slot.
+  features.slot_boxes = settings.four_slots && (settings.widescreen || strips_shown);
 }
 
 // The running game's paused picture: menus drawn over it show it as the game frame it was.

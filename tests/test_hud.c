@@ -4,6 +4,7 @@
 #include "core/gb.h"
 #include "hw/render.h"
 #include "wide/hud.h"
+#include "wide/wide.h"
 #include "ui/labels.h"
 
 // hud.c has the same bytes; this copy is deliberately separate, so a typo in one is caught by the other
@@ -162,6 +163,42 @@ static void bank1_and_upside_down_cells_are_left_alone(void) {
   }
 }
 
+// Item X/Y beside the narrow picture: the letter above where the icon goes, on the bar's colour, the
+// rest of the strip black; nothing while the bar is down or the slots are off
+static void slot_strip_draws_its_letter_on_a_tab(void) {
+  static uint8_t strip[WIDE_STRIP_W * FB_H * 3];
+  memset(&s, 0, sizeof s);
+  s.hram[0x9b - 0x80] = 2;                             // Ages wDisplayedLcdBehaviour: the bar is split
+  s.wram[0][0xd00] = 1;                                // wScrollMode: normal play
+  for (int y = 0; y < 16; y++) s.framebuffer[y * FB_W] = 0x7fff;  // the bar's paper, white
+  WideOptions o = {false, false, {0, 0, 0}, NULL, 0, true, {0, 0}, {'Z', 0, 0, 0}};
+  memset(strip, 0x55, sizeof strip);
+  ASSERT(wide_slot_strip(&s, &o, 0, false, strip));
+  const uint8_t *g = hud_glyph('Z');
+  for (int y = 0; y < 26; y++)
+    for (int x = 0; x < WIDE_STRIP_W; x++) {
+      bool ink = y >= 1 && y <= 7 && x >= 5 && x < 11 && (g[y - 1] >> (7 - (x - 5))) & 1;
+      ASSERT_EQ(strip[(y * WIDE_STRIP_W + x) * 3], ink ? 0 : 0xff);
+    }
+  for (int i = 26 * WIDE_STRIP_W * 3; i < WIDE_STRIP_W * FB_H * 3; i++) ASSERT_EQ(strip[i], 0);
+  ASSERT(wide_slot_strip(&s, &o, 1, false, strip));
+  for (int x = 0; x < WIDE_STRIP_W; x++)                // Y, the game's letter, when no glyph is given
+    ASSERT_EQ(strip[(4 * WIDE_STRIP_W + x) * 3], x >= 5 && x < 11 && (hud_glyph('Y')[3] >> (7 - (x - 5))) & 1 ? 0 : 0xff);
+  // with room, widescreen's box: letter, then the bracket from line 1 to 14, as tall as the bar
+  static uint8_t box[WIDE_BOX_W * FB_H * 3];
+  ASSERT(wide_slot_strip(&s, &o, 0, true, box));
+  for (int y = 1; y <= 7; y++)
+    for (int x = 0; x < 6; x++) ASSERT_EQ(box[(y * WIDE_BOX_W + 1 + x) * 3], (g[y - 1] >> (7 - x)) & 1 ? 0 : 0xff);
+  for (int y = 1; y <= 14; y++) ASSERT_EQ(box[(y * WIDE_BOX_W + 7) * 3], 0);
+  ASSERT_EQ(box[(15 * WIDE_BOX_W + 7) * 3], 0xff);
+  for (int i = 16 * WIDE_BOX_W * 3; i < WIDE_BOX_W * FB_H * 3; i++) ASSERT_EQ(box[i], 0);
+  o.slots = false;
+  ASSERT(!wide_slot_strip(&s, &o, 0, false, strip));
+  o.slots = true;
+  s.hram[0x9b - 0x80] = 0;
+  ASSERT(!wide_slot_strip(&s, &o, 0, false, strip));
+}
+
 int main(void) {
   RUN(glyphs_exist_for_every_code);
   RUN(glyphs_leave_the_bracket_alone);
@@ -175,5 +212,6 @@ int main(void) {
   RUN(second_drawn_copy_is_read);
   RUN(cell_palette_is_its_own);
   RUN(bank1_and_upside_down_cells_are_left_alone);
+  RUN(slot_strip_draws_its_letter_on_a_tab);
   return 0;
 }

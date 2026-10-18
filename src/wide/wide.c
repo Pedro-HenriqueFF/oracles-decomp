@@ -56,6 +56,12 @@ static View view_of(const GBSample *s, const GameRam *r) {
   return v;
 }
 
+// The status bar is up whenever the split is on, menu or no menu.
+static bool bar_up(const GBSample *s, const GameRam *r) {
+  int split = rd(s, r->lcd_behaviour);
+  return (split == 2 || split == 3) && (view_of(s, r).shown || rd(s, W_OPENED_MENU));
+}
+
 static bool room_shown(const GBSample *s, const GameRam *r) {
   View v = view_of(s, r);
   return v.shown && !v.moving;
@@ -288,7 +294,7 @@ static const Neighbour *around_cell(Around *a, int gx, int gy) {
 // tie us to wherever the bar happens to put its own.
 enum { HUD_SHIFT = 30, SLOT_LEFT = 2, SLOT_PITCH = 38,
        SLOT_OPEN = 6, SLOT_ICON = 10, SLOT_CLOSE = 28, SLOT_BOX_W = 16,
-       SLOT_TOP = 1, SLOT_BOTTOM = 14 };
+       SLOT_TOP = 1, SLOT_BOTTOM = 14, SLOT_BOX = SLOT_CLOSE + 2 };
 
 enum { SLOT_LETTER_TOP = 1 };
 
@@ -339,6 +345,57 @@ static void draw_slot_icons(const GBSample *s, const WideOptions *o, const SlotI
       put555(row + (si->x[i] + x) * 3, s->ob_pal[p] | (s->ob_pal[p + 1] << 8), false);
     }
   }
+}
+
+// One slot for the narrow picture's side bars, the rest of the strip black: with room, the box
+// widescreen draws (the same pixels, cut out of a bar row drawn the same way); without, its letter
+// above its icon on a tab of the bar's colour hanging from the top.
+enum { STRIP_LETTER_X = 5, STRIP_ICON_TOP = 9, STRIP_H = STRIP_ICON_TOP + 17 };
+
+bool wide_slot_strip(const GBSample *s, const WideOptions *o, int slot, bool box, uint8_t *out) {
+  const GameRam *r = o->seasons ? &seasons_ram : &ages_ram;
+  if (!o->slots || !bar_up(s, r)) return false;
+  int w = box ? WIDE_BOX_W : WIDE_STRIP_W;
+  memset(out, 0, (size_t)w * FB_H * 3);
+  if (box) {
+    static SlotIcons icons;
+    static uint8_t row[WIDE_W * 3];
+    slot_icons(s, o, &icons);
+    // the game's gap of eight between boxes, towards the picture: after X's box, before Y's
+    int at = slot ? SLOT_PITCH - SLOT_BOX : 1;
+    for (int y = 0; y < STATUS_BAR_LINES; y++) {
+      for (int x = 0; x < WIDE_W; x++) put555(row + x * 3, s->framebuffer[y * FB_W], false);
+      draw_slot_icons(s, o, &icons, y, row);
+      uint8_t *line = out + (size_t)y * w * 3;
+      for (int x = 0; x < w; x++) memcpy(line + x * 3, row, 3);
+      memcpy(line + at * 3, row + (SLOT_LEFT + slot * SLOT_PITCH) * 3, SLOT_BOX * 3);
+    }
+    return true;
+  }
+  const uint8_t *bg = s->drawn_bg_pal[s->line_drawn[0] & 1];
+  int paper = s->framebuffer[0], ink = bg[3 * 2] | (bg[3 * 2 + 1] << 8);
+  const uint8_t *g = hud_glyph(o->glyph[slot]);
+  if (!g) g = hud_glyph(slot ? 'Y' : 'X');
+  WideItemIcon ic;
+  bool icon = o->rom && o->slot_item[slot] &&
+              wide_item_icon(o->rom, o->rom_size, o->seasons, o->slot_item[slot], &s->wram[0][0x600], &ic);
+  int icon_x = icon ? (w - ic.halves * 8) / 2 : 0;
+  for (int y = 0; y < STRIP_H; y++) {
+    uint8_t *row = out + (size_t)y * w * 3;
+    for (int x = 0; x < w; x++) put555(row + x * 3, paper, false);
+    if (y >= SLOT_LETTER_TOP && y < SLOT_LETTER_TOP + HUD_GLYPH_H)
+      for (int x = 0; x < 6; x++)
+        if (g[y - SLOT_LETTER_TOP] & (0x80 >> x)) put555(row + (STRIP_LETTER_X + x) * 3, ink, false);
+    int iy = y - STRIP_ICON_TOP;
+    if (!icon || iy < 0 || iy >= 16) continue;
+    for (int x = 0; x < ic.halves * 8; x++) {
+      int ci = ic.ci[iy][x];
+      if (!ci) continue;
+      int p = ic.pal[x >> 3] * 8 + ci * 2;
+      put555(row + (icon_x + x) * 3, s->ob_pal[p] | (s->ob_pal[p + 1] << 8), false);
+    }
+  }
+  return true;
 }
 
 // The colour that goes beside a menu. The strips take the one colour its edges are mostly made of:
@@ -395,8 +452,7 @@ void wide_render(const GBSample *s, const WideOptions *o, uint8_t *out) {
   // The status bar is up whenever the split is on, menu or no menu, so it carries across the whole
   // width in both. The strips below it follow the menu when there is one.
   bool menu = rd(s, W_OPENED_MENU) != 0;
-  int split = rd(s, r->lcd_behaviour);
-  bool bar_shown = (split == 2 || split == 3) && (a.v.shown || menu);
+  bool bar_shown = bar_up(s, r);
   // A menu's strips hold one steady colour. Between pages the game fades the screen to white and
   // then blanks it, and the frame the fade ends on is still white, so the colour is taken only from
   // a picture that has been settled for a couple of frames and kept the rest of the time -- strips
