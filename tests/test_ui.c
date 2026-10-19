@@ -51,6 +51,9 @@ static void save_files_are_read_and_verified(void) {
   ASSERT_EQ(ui_read_files(sram, sizeof sram, false, f), 1);
   ASSERT(!f[0].valid);
   ASSERT_EQ(ui_read_files(NULL, 0, false, f), 0);
+  make_file(sram + 0x0010, false, "\xc3\xd2\xab" "go", 20, 0);   // the European name entry: Í, á, ñ
+  ASSERT_EQ(ui_read_files(sram, sizeof sram, false, f), 2);
+  ASSERT(f[0].valid && strcmp(f[0].name, "Iango") == 0);
 }
 
 static void home_leads_with_resume_and_slots(void) {
@@ -81,6 +84,9 @@ static void home_leads_with_resume_and_slots(void) {
   ASSERT(!h.files_page);
   home_press(&h, UI_DOWN);
   ASSERT_EQ(home_press(&h, UI_ACCEPT).file, LAUNCH_TITLE);
+  home_press(&h, UI_DOWN);
+  ASSERT_EQ(h.row, HOME_ADD_ROM);
+  ASSERT_EQ(home_press(&h, UI_ACCEPT).action, LAUNCH_ADD_ROM);
   home_press(&h, UI_DOWN);
   ASSERT_EQ(h.row, HOME_SLOT1 + 1);                     // wraps past Resume (none) and slot 1 (empty)
   h.l.games[UI_GAME_SEASONS].has_resume = true;
