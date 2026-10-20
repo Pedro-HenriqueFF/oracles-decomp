@@ -1801,7 +1801,7 @@ cmd8:
   CYC(b_+77, b_+79); goto again;
 no_extra:
   CYC(b_+79, b_+81); A = 0;
-  CYC(b_+81, b_+84); W8(wTextIsActive) = A;
+  CYC(b_+81, b_+84); W8(wTextDisplayMode) = A;
   CYC(b_+84, b_+87); SET_HL(w7TextDisplayState);
   CYC(b_+87, b_+89); mem_wr(gb, HL, 0x0f);
   CYC(b_+89, b_+90); L = alu_inc8(gb, L);

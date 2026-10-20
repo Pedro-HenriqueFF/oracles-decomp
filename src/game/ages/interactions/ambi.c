@@ -144,7 +144,7 @@ spawn_ghost_veran:
   CYC(b_+168, b_+169); W8(w1Link_direction) = A;
   CYC(b_+169, b_+170); W8(w1Link_angle) = A;
   CYC(b_+170, b_+173); W8(wDisableLinkCollisionsAndMenu) = A;
-  CYC(b_+173, b_+176); W8(wTmpcfc0_genericCutscene_cfd0) = A;
+  CYC(b_+173, b_+176); W8(wTmpcfc0_genericCutscene_state) = A;
   CYC(b_+176, b_+177); A = alu_dec8(gb, A);
   CYC(b_+177, b_+180); W8(wActiveMusic) = A;
   CYC(b_+180, b_+183); SET_HL(wcc93);
@@ -313,7 +313,7 @@ substate0:
 substate1:
   CALL_C(b_+17, interactionAnimateBasedOnSpeed_hook, SYM(interactionAnimateBasedOnSpeed), b_+20);
   CALL_C(b_+20, objectApplySpeed_hook, SYM(objectApplySpeed), b_+23);
-  CYC(b_+23, b_+26); A = W8(wTmpcfc0_genericCutscene_cfd0);
+  CYC(b_+23, b_+26); A = W8(wTmpcfc0_genericCutscene_state);
   CYC(b_+26, b_+28); alu_cp(gb, 0x06);
   if (!(F & FZ)) { CYCT(b_+28, b_+29); ret_effect(gb); return; }
   CYC(b_+28, b_+29);
@@ -338,7 +338,7 @@ void ambi_runSubid03_hook(GB *gb) {
   } while (0);
 
 substate0:
-  CYC(b_+14, b_+17); A = W8(wTmpcfc0_genericCutscene_cfd0);
+  CYC(b_+14, b_+17); A = W8(wTmpcfc0_genericCutscene_state);
   CYC(b_+17, b_+19); alu_cp(gb, 1);
   if (!(F & FZ)) { CYCT(b_+19, b_+21); goto animate; }
   CYC(b_+19, b_+21);
@@ -391,7 +391,7 @@ substate3:
   if (!(F & FZ)) { CYCT(b_+89, b_+90); ret_effect(gb); return; }
   CYC(b_+89, b_+90);
   CYC(b_+90, b_+92); A = 2;
-  CYC(b_+92, b_+95); W8(wTmpcfc0_genericCutscene_cfd0) = A;
+  CYC(b_+92, b_+95); W8(wTmpcfc0_genericCutscene_state) = A;
   CYC(b_+95, b_+98); TAIL(interactionIncSubstate);
 }
 
@@ -426,7 +426,7 @@ substate1:
   if (F & FZ) { CYCT(b_+33, b_+34); ret_effect(gb); return; }
   CYC(b_+33, b_+34);
   CYC(b_+34, b_+36); A = 3;
-  CYC(b_+36, b_+39); W8(wTmpcfc0_genericCutscene_cfd0) = A;
+  CYC(b_+36, b_+39); W8(wTmpcfc0_genericCutscene_state) = A;
   CYC(b_+39, b_+42); TAIL(interactionIncSubstate);
 }
 
@@ -436,7 +436,7 @@ void ambi_runSubid05_hook(GB *gb) {
   CALL_C(b_+0, interactionRunScript_hook, SYM(interactionRunScript), b_+3);
   if (F & FC) { CYCT(b_+3, b_+6); interactionDelete_hook(gb); return; }
   CYC(b_+3, b_+6);
-  CYC(b_+6, b_+9); A = W8(wTmpcfc0_genericCutscene_cfd0);
+  CYC(b_+6, b_+9); A = W8(wTmpcfc0_genericCutscene_state);
   CYC(b_+9, b_+11); alu_bit(gb, 1, A);
   if (F & FZ) { CYCT(b_+11, b_+14); interactionAnimate_hook(gb); return; }
   CYC(b_+11, b_+14);
