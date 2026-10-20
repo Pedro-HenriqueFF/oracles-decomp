@@ -75,8 +75,6 @@ void mergedTwinrova_checkTimeToSwapRoomFromDamage_hook(GB *gb);
 void mergedTwinrova_deathCutscene_hook(GB *gb);
 void mergedTwinrova_decVar3bIfNonzero_hook(GB *gb);
 
-// 10:45f1 (real call from enemyCode01, tail-jumps into whichever state/subid root is
-// selected, so this stays a plain non-hooked helper invoked via explicit push_effect).
 void enemyCode01__normalStatus_hook(GB *gb) {
   BASE(enemyCode01);
   uint16_t sp0_ = gb->sp; (void)sp0_;
@@ -161,7 +159,7 @@ collisionOccurred:
   CYC(b_+88, b_+90); A = 0xf0;  // ld a,SNDCTRL_STOPMUSIC
   CYC(b_+90, b_+93); if (hook_is(gb, SYM(playSound_b00), playSound_b00_hook)) { playSound_b00_hook(gb); return; } HANDOFF(SYM(playSound_b00));  // jp playSound
 normalStatus:
-  CYC(b_+93, b_+96); push_effect(gb, b_+96); enemyCode01__normalStatus_hook(gb);  // call @normalStatus
+  enemyCode01__normalStatus_hook(gb);
 }
 
 void mergedTwinrova_state_uninitialized_hook(GB *gb) {

@@ -952,7 +952,7 @@ void twinrova_calculateAnimationFromAngle_hook(GB *gb) {
   CYC(b_+17, b_+18); A = B;  // ld a,b
   if ((F & FZ)) { RET_TAKEN(b_+18); return; } CYC(b_+18, b_+19);  // ret z
   CYC(b_+19, b_+21); alu_cp(gb, mem_rd(gb, HL));  // cp (hl)
-  RET(SYM(twinrova_subid0_updateTargetPosition)); return;  // ret
+  RET(b_+21); return;  // ret
 }
 
 void twinrova_subid0_updateTargetPosition_hook(GB *gb) {

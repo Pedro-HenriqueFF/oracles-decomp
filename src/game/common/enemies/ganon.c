@@ -129,8 +129,6 @@ void ganon_makeRoomBoundarySolid_hook(GB *gb);
 void ganon_updateSeizurePalette_hook(GB *gb);
 void ganon_setTileReplacementMode_hook(GB *gb);
 
-// 10:50a3 (real call from enemyCode04, tail-jumps into whichever state root is selected,
-// so this stays a plain non-hooked helper invoked via explicit push_effect).
 void enemyCode04__normalStatus_hook(GB *gb) {
   BASE(enemyCode04);
   uint16_t sp0_ = gb->sp; (void)sp0_;
@@ -194,7 +192,7 @@ void enemyCode04_hook(GB *gb) {
   CYC(b_+64, b_+67); SET_BC(0x2f0e);  // ld bc,TX_2f0e
   CYC(b_+67, b_+70); if (hook_is(gb, SYM(showText), showText_hook)) { showText_hook(gb); return; } HANDOFF(SYM(showText));  // jp showText
 normalStatus:
-  CYC(b_+70, b_+72); push_effect(gb, b_+72); enemyCode04__normalStatus_hook(gb);  // call @normalStatus
+  enemyCode04__normalStatus_hook(gb);
 }
 
 void ganon_state_uninitialized_hook(GB *gb) {
