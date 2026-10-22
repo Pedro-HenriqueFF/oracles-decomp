@@ -1954,15 +1954,22 @@ static void many_fresh_coroutines_per_iteration_are_refused_promptly(void) {
 // bare loop (measured 5-16s, worse under host load), which is precisely what
 // MOD_LOAD_WALLCLOCK_DEADLINE_SECONDS now exists to bound regardless of how expensive a mod's
 // instructions turn out to be -- so this test needs no special treatment any more; it is
-// expected to land at the same ~2-second deadline as every other budget test, via whichever of
-// the two messages the deadline or instruction count happens to produce.
+// expected to land at the same ~2-second deadline as every other budget test.
+//
+// Each iteration also runs a backtracking string.find over a 300-byte string (about 0.1ms of C
+// for one VM instruction), because the bare shape stopped being slow enough: on a 2026 Apple
+// M5 it burned the whole 50M-instruction budget in under 2s, so the instruction count fired
+// first and the "cut off" assertion below failed on fast machines only. With the find, the
+// budget would take minutes, so the deadline is what stops it on any machine.
 static void a_pcall_wrapped_coroutine_wrap_spinner_is_refused_promptly(void) {
   clear_mods();
   make_mod("aaa-healthy8", "id=aaa-healthy8\napi=1\ngames=ages,seasons\n", "oracles.log('aaa ok')\n");
   make_mod("mid-nested-pcall", "id=mid-nested-pcall\napi=1\ngames=ages,seasons\n",
+      "local s = string.rep('a', 300)\n"
       "while true do\n"
       "  pcall(function()\n"
       "    pcall(function()\n"
+      "      string.find(s, 'a*b')\n"
       "      coroutine.wrap(function() while true do end end)()\n"
       "    end)\n"
       "  end)\n"
@@ -1987,18 +1994,10 @@ static void a_pcall_wrapped_coroutine_wrap_spinner_is_refused_promptly(void) {
   ASSERT(mods_enabled(2));
   ASSERT(strstr(out, "mid-nested-pcall") != NULL);
   // Unlike the other two fresh-thread fixtures above, this one's own coroutine.create access is
-  // wrapped in pcall, so the "nil value (global 'coroutine')" error never escapes the inner
-  // pcall at all -- withholding `coroutine` is what makes every iteration cheap-*ish* (a
-  // nil-index error and two unwinds, not a real fresh thread), but still far more
-  // wall-clock-expensive per VM instruction than a bare loop. That is exactly this fixture's
-  // reason to exist: unlike every other test in this file, it must be caught by the *deadline*
-  // specifically, not merely "the budget mechanism, whichever one" -- so this asserts the
-  // message text directly rather than leaning on ASSERT_PROMPT's elapsed-time bound, which a
-  // mutation disabling the deadline check does not reliably fail: on this machine, disabling it
-  // still finishes (via the instruction count alone) in ~2.7s -- nowhere near the 5-16s this
-  // shape measured under heavier host load, but still comfortably under any elapsed-time bound
-  // loose enough to tolerate ordinary jitter. The message, not the clock, is what actually
-  // changes the moment the deadline stops being what catches this.
+  // wrapped in pcall, so the "nil value (global 'coroutine')" error never escapes and the loop
+  // keeps spinning. It must be caught by the *deadline* specifically, so this asserts the
+  // message rather than leaning on ASSERT_PROMPT: with the deadline check disabled, the
+  // instruction budget alone does not stop it before the 20s alarm (checked by mutation).
   ASSERT(strstr(out, "cut off") != NULL);
   mods_shutdown();
 }
