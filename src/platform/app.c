@@ -704,6 +704,7 @@ static bool poll_event(SDL_Event *ev) {
     pad_last = true;
     pad_seen = style_of_pad(ev->gaxis.which);
   }
+  oracles_window_event(ev);
   touch_event(ev);
   stick_event(ev);
   if (ev->type == SDL_EVENT_DID_ENTER_FOREGROUND) sync_retry_soon();
@@ -1108,7 +1109,7 @@ static int pick_slot_page(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, 
     slots_ui.tap = GUI_NONE;
     present(ren, tex, game_rgb ? game_rgb : black);
     push_button(slots_ui.tap == GUI_BACK ? UI_BACK : slots_ui.tap >= 0 ? UI_ACCEPT : GUI_NONE);
-    SDL_Delay(16);
+    oracles_frame_wait();
   }
 }
 
@@ -1155,7 +1156,7 @@ static bool run_controls_page(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *t
     else if (controls_ui.tap == GUI_BACK) push_button(UI_BACK);
     else if (controls_ui.tap >= 0) push_button(UI_ACCEPT);
     else if (controls_ui.page >= 0 && controls_ui.page != m.pad_page) push_button(UI_RIGHT);
-    SDL_Delay(16);
+    oracles_frame_wait();
   }
 }
 
@@ -1207,7 +1208,7 @@ static bool run_settings_page(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *t
     present(ren, tex, game_rgb);
     if (settings_ui.back) push_button(UI_BACK);
     else push_settings_tap(&settings_ui.tap);
-    SDL_Delay(16);
+    oracles_frame_wait();
   }
 }
 
@@ -1256,7 +1257,7 @@ static void wait_tick(SDL_Renderer *ren, SDL_Texture *tex, const uint8_t *rgb, b
   while (poll_event(&ev))
     if (ev.type == SDL_EVENT_QUIT) *quit = true;
   present(ren, tex, rgb);
-  SDL_Delay(16);
+  oracles_frame_wait();
 }
 
 // Waits over the open page until the sync thread has finished one sync of `game` (HTTP gives up
@@ -1330,7 +1331,7 @@ static bool run_conflicts_page(SDL_Renderer *ren, SDL_Texture *tex, const SyncRe
       conflict_ui.tap = GUI_NONE;
       present(ren, tex, page_black);
       push_button(conflict_ui.tap == GUI_BACK ? UI_BACK : conflict_ui.tap >= 0 ? UI_ACCEPT : GUI_NONE);
-      SDL_Delay(16);
+      oracles_frame_wait();
     }
   }
   return true;
@@ -1427,7 +1428,7 @@ static bool run_sync_page(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, 
           sync_ui.tap = GUI_NONE;
           present(ren, tex, game_rgb);
           push_button(sync_ui.tap == GUI_BACK ? UI_BACK : sync_ui.tap == GUI_CONNECT ? UI_ACCEPT : GUI_NONE);
-          SDL_Delay(16);
+          oracles_frame_wait();
         }
         SDL_StopTextInput(win);
         SDL_DestroyProperties(props);
@@ -1448,7 +1449,7 @@ static bool run_sync_page(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, 
     sync_ui.tap = GUI_NONE;
     present(ren, tex, game_rgb);
     push_button(sync_ui.tap == GUI_BACK ? UI_BACK : sync_ui.tap >= 0 ? UI_ACCEPT : GUI_NONE);
-    SDL_Delay(16);
+    oracles_frame_wait();
   }
 #undef REOPEN
 }
@@ -1549,7 +1550,7 @@ static bool run_home(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, const
     present(ren, tex, rgb);
     if (home_ui.button >= 0) push_button(home_ui.button);
     else push_settings_tap(&home_ui.tap);
-    SDL_Delay(16);
+    oracles_frame_wait();
   }
 }
 
@@ -1900,7 +1901,7 @@ static GameEnd run_game(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, co
       present(ren, tex, paused_rgb);
       ui_leave(was);
       if (pause_ui.tap >= 0) push_button(UI_ACCEPT);
-      SDL_Delay(16);
+      oracles_frame_wait();
       continue;
     }
 
@@ -1918,7 +1919,7 @@ static GameEnd run_game(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, co
       // fast-forward: up to 4 frames per shown frame, paced by the display, without sound
       for (int i = 0; i < 4; i++) { features_frame(gb); gb_run_frame(gb); frames++; }
       apu_read_samples(&gb->apu, samples, APU_RING);
-      SDL_Delay(16);
+      oracles_frame_wait();
     } else {
       if (mode == MODE_PLAY && audio && SDL_GetAudioStreamQueued(audio) > AUDIO_TARGET_BYTES) { SDL_Delay(1); continue; }
       features_frame(gb); gb_run_frame(gb);
