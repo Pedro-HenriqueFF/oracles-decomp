@@ -641,6 +641,9 @@ static void present_game(SDL_Renderer *ren, SDL_Texture *tex, const GBSample *sa
   // caller already dereferences it unguarded a line above), so wram[0]/wram[3] below are always
   // valid, live pointers -- never the NULL case the struct's own comment documents for "before
   // any game is running".
+  int scroll_x, scroll_y, origin_x = 0, origin_y = 0;
+  mods_picture_scroll(sample, &scroll_x, &scroll_y);
+  bool origin = wide_room_origin(sample, seasons, &origin_x, &origin_y);
   ModsFrame mf = {
     .wram = sample->wram[0],
     .wram3 = sample->wram[3],
@@ -653,6 +656,12 @@ static void present_game(SDL_Renderer *ren, SDL_Texture *tex, const GBSample *sa
     .room_group = rd_room_group(sample, seasons),
     .bg_pal = mods_picture_bg_pal(sample),
     .oam = mods_picture_oam(sample),
+    .scroll = true,
+    .scroll_x = scroll_x,
+    .scroll_y = scroll_y,
+    .origin = origin,
+    .origin_x = origin_x,
+    .origin_y = origin_y,
     .rom = rom,
     .rom_size = rom_size,
     .font = &mod_font,

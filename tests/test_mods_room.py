@@ -219,7 +219,32 @@ with tempfile.TemporaryDirectory() as cache:
             "    if n >= 3 and not pal_varied then pal_varied = true oracles.log('palwatch varied p=' .. i) end\n"
             "  end\n"
             "end\n"
+            # Task 6: camera() against Seasons' own camera, hCameraX ($ffaa) / hCameraY ($ffa8),
+            # and its scroll against wScreenOffsetX/Y ($cd09/$cd08): room_x is SCX minus the
+            # offset, room_y SCY minus it plus the 16 status-bar lines. The camera is the drawn
+            # picture's, so off the exact frame it may trail the game's camera by one frame or sit
+            # up to 3 pixels off in a shake; anything else is logged as bad.
+            "local cam_exact, cam_bad, cam_room = false, false, false\n"
+            "local prev_cx, prev_cy = -1, -1\n"
+            "local function check_camera()\n"
+            "  local c = oracles.camera()\n"
+            "  local cx = oracles.rd(0xffaa) + oracles.rd(0xffab) * 256\n"
+            "  local cy = oracles.rd(0xffa8) + oracles.rd(0xffa9) * 256\n"
+            "  if c ~= nil and c.room_x ~= nil then\n"
+            "    cam_room = true\n"
+            "    local sx = (c.x - oracles.rd(0xcd09)) % 256 == c.room_x % 256\n"
+            "    local sy = (c.y - oracles.rd(0xcd08) + 16) % 256 == c.room_y % 256\n"
+            "    if c.room_x == cx and c.room_y == cy and sx and sy then\n"
+            "      if not cam_exact then cam_exact = true oracles.log('camwatch exact x=' .. c.room_x .. ' y=' .. c.room_y) end\n"
+            "    elseif not (c.room_x == prev_cx and c.room_y == prev_cy)\n"
+            "           and not (math.abs(c.room_x - cx) <= 3 and math.abs(c.room_y - cy) <= 3) then\n"
+            "      if not cam_bad then cam_bad = true oracles.log('camwatch bad ' .. c.room_x .. ',' .. c.room_y .. ' camera ' .. cx .. ',' .. cy) end\n"
+            "    end\n"
+            "  end\n"
+            "  prev_cx, prev_cy = cx, cy\n"
+            "end\n"
             "oracles.on_frame(function()\n"
+            "  check_camera()\n"
             "  if oracles.room() ~= nil and oracles.room().width > 0 then\n"
             "    if not spr_exact then check_sprites() end\n"
             "    if not pal_varied and not pal_nil then check_palettes() end\n"
@@ -327,4 +352,9 @@ with tempfile.TemporaryDirectory() as cache:
         f'oracles.tile_palette() returned nil during a game, so app.c gave it no palettes: {pal}')
     assert any('palwatch varied' in l for l in pal), (
         f'no BG palette had three distinct colours; stderr:\n{r.stderr}')
+    # Task 6: camera() through app.c's scroll and origin fields.
+    cam = [l for l in r.stderr.splitlines() if 'camwatch ' in l]
+    assert not any('camwatch bad' in l for l in cam), f'oracles.camera() strayed from hCamera: {cam}'
+    assert any('camwatch exact' in l for l in cam), (
+        f'no frame had oracles.camera() equal hCamera with a matching scroll; stderr:\n{r.stderr}')
 print('ok mods_room')

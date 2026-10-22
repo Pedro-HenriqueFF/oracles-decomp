@@ -169,6 +169,10 @@ typedef struct {
   int room_group;               // the room's group, for callers that need it with `room`
   const uint8_t *bg_pal;        // the 8 BG palettes the picture was drawn with, 64 bytes, or NULL
   const uint8_t *oam;           // the OAM the picture was drawn with, 160 bytes, or NULL
+  bool scroll;                  // scroll_x/scroll_y hold a picture's scroll (false: no picture)
+  int scroll_x, scroll_y;       // SCX/SCY the play area's first line was drawn with
+  bool origin;                  // origin_x/origin_y hold a room position (false: not in play)
+  int origin_x, origin_y;       // the room pixel at the play area's top-left
   const uint8_t *rom;           // for draw_icon; may be NULL
   size_t rom_size;
   const UiFont *font;           // for draw_text; may be NULL

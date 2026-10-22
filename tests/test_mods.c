@@ -4577,6 +4577,88 @@ static void the_picture_palettes_and_oam_are_the_ones_line_143_was_drawn_from(vo
   ASSERT(mods_picture_oam(&s) == s.drawn_oam[0]);
 }
 
+// ---------------------------------------------------------------------------
+// Stage 3 Task 6: oracles.camera().
+// ---------------------------------------------------------------------------
+
+// Every field from its own source: x/y from the scroll, room_x/room_y from the origin, including a
+// negative origin (a screen shake past the room's left edge).
+static void camera_reports_scroll_and_room_origin(void) {
+  clear_mods();
+  const char *root = make_mod("camknown", "id=camknown\napi=1\ngames=ages,seasons\n",
+      "oracles.on_frame(function()\n"
+      "  local c = oracles.camera()\n"
+      "  oracles.log('x=' .. c.x .. ' y=' .. c.y .. ' rx=' .. c.room_x .. ' ry=' .. c.room_y)\n"
+      "end)\n");
+  ASSERT(mods_init(root, true));
+  static uint8_t wram[0x1000], hram[127];
+  ModsFrame f = {
+    .wram = wram, .hram = hram, .seasons = true, .width = 160, .room = 1,
+    .scroll = true, .scroll_x = 37, .scroll_y = 201, .origin = true, .origin_x = -2, .origin_y = 120,
+  };
+  mods_frame(&f);
+  ASSERT(mods_enabled(0));
+  ASSERT(mods_last_log());
+  ASSERT(strstr(mods_last_log(), "x=37 y=201 rx=-2 ry=120") != NULL);
+  mods_shutdown();
+}
+
+// Outside normal play the scroll is still there but the room position is left out, even though
+// the frame's origin fields hold numbers: only the origin flag decides.
+static void camera_leaves_the_room_position_out_outside_play(void) {
+  clear_mods();
+  const char *root = make_mod("camnoroom", "id=camnoroom\napi=1\ngames=ages,seasons\n",
+      "oracles.on_frame(function()\n"
+      "  local c = oracles.camera()\n"
+      "  oracles.log('x=' .. c.x .. ' rx=' .. tostring(c.room_x) .. ' ry=' .. tostring(c.room_y))\n"
+      "end)\n");
+  ASSERT(mods_init(root, true));
+  static uint8_t wram[0x1000], hram[127];
+  ModsFrame f = {
+    .wram = wram, .hram = hram, .seasons = true, .width = 160, .room = 1,
+    .scroll = true, .scroll_x = 4, .scroll_y = 5, .origin = false, .origin_x = 6, .origin_y = 7,
+  };
+  mods_frame(&f);
+  ASSERT(mods_enabled(0));
+  ASSERT(mods_last_log());
+  ASSERT(strstr(mods_last_log(), "x=4 rx=nil ry=nil") != NULL);
+  mods_shutdown();
+}
+
+// No picture: nil, even with numbers and an origin flag in the frame.
+static void camera_is_nil_without_a_picture(void) {
+  clear_mods();
+  const char *root = make_mod("camnil", "id=camnil\napi=1\ngames=ages,seasons\n",
+      "oracles.on_frame(function()\n"
+      "  oracles.log('c=' .. tostring(oracles.camera()))\n"
+      "end)\n");
+  ASSERT(mods_init(root, true));
+  static uint8_t wram[0x1000], hram[127];
+  ModsFrame f = {
+    .wram = wram, .hram = hram, .seasons = true, .width = 160, .room = 1,
+    .scroll = false, .scroll_x = 4, .scroll_y = 5, .origin = true, .origin_x = 6, .origin_y = 7,
+  };
+  mods_frame(&f);
+  ASSERT(mods_enabled(0));
+  ASSERT(mods_last_log());
+  ASSERT(strstr(mods_last_log(), "c=nil") != NULL);
+  mods_shutdown();
+}
+
+// app.c takes the scroll through this: line 16, the play area's first, not the status bar's
+// lines above it or the line after, and SCX for x, SCY for y.
+static void the_picture_scroll_is_the_play_areas_first_line(void) {
+  static GBSample s;
+  for (int y = 0; y < FB_H; y++) {
+    s.line_scx[y] = (uint8_t)(100 + y);
+    s.line_scy[y] = (uint8_t)(200 - y);
+  }
+  int x, y;
+  mods_picture_scroll(&s, &x, &y);
+  ASSERT_EQ(x, 116);
+  ASSERT_EQ(y, 184);
+}
+
 int main(void) {
   // The alarm handler's _exit(1) skips normal stdio teardown (deliberately: calling atexit
   // handlers or flushing from inside a signal handler is not safe), which means any buffered
@@ -4766,5 +4848,9 @@ int main(void) {
   RUN(sprites_lists_only_visible_entries_in_picture_coordinates);
   RUN(tile_palette_and_sprites_are_nil_without_a_picture);
   RUN(the_picture_palettes_and_oam_are_the_ones_line_143_was_drawn_from);
+  RUN(camera_reports_scroll_and_room_origin);
+  RUN(camera_leaves_the_room_position_out_outside_play);
+  RUN(camera_is_nil_without_a_picture);
+  RUN(the_picture_scroll_is_the_play_areas_first_line);
   return skipped ? 77 : 0;
 }

@@ -132,7 +132,7 @@ Every pixel you draw is opaque; there is no blending. Where you draw nothing, th
 
 ## API reference
 
-Everything a mod can call lives in the `oracles` table. This is the whole of it — eighteen functions.
+Everything a mod can call lives in the `oracles` table. This is the whole of it — nineteen functions.
 Anything not listed here does not exist (and a test fails the build if this list and the real one
 ever disagree).
 
@@ -140,6 +140,30 @@ Arguments called *integer* must be whole numbers: `5` and `5.0` are both fine, `
 rather than a rounded 5, so round it yourself with `math.floor`. A number far too big for a 32-bit
 integer is clamped to the end of that range rather than wrapping around. Anything that isn't a
 number at all raises an error too, which switches your mod off unless you catch it with `pcall`.
+
+### `oracles.camera()`
+
+Returns where the picture is looking, as `{ x, y, room_x, room_y }`, or `nil` if there is no picture
+yet.
+
+```lua
+local c, s = oracles.camera(), oracles.sprites()
+if c and c.room_x and s and s[1] then
+  oracles.log("a sprite at room pixel " .. (c.room_x + s[1].x) .. "," .. (c.room_y + s[1].y - 16))
+end
+```
+
+`room_x` and `room_y` are the pixel of the current room shown at the top-left of the play area, the
+part of the picture under the 16-pixel status bar. They match `oracles.sprites()`, which describes
+the same drawn picture: a sprite at picture position `(sx, sy)` is at `(room_x + sx, room_y + sy - 16)`
+in the room. They can be a few pixels negative, or a few past the far edge, while the screen
+shakes. **They are left out (`nil`)** whenever the picture is not showing the room in normal play:
+menus, cutscenes, the scroll between two rooms, and side-scrolling areas.
+
+`x` and `y` are the Game Boy's own background scroll registers for the top of the play area, 0-255,
+and are always there when there is a picture. They wrap around at 256 and include an offset for
+where the game placed the room in video memory, so for most purposes `room_x`/`room_y` are the ones
+you want.
 
 ### `oracles.collision(x, y)`
 

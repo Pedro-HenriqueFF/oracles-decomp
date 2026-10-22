@@ -12,3 +12,11 @@ static inline const uint8_t *mods_picture_bg_pal(const GBSample *s) {
 static inline const uint8_t *mods_picture_oam(const GBSample *s) {
   return s->drawn_oam[s->line_drawn[FB_H - 1]];
 }
+
+// SCX/SCY of the play area's first line, under the 16-line status bar
+enum { MODS_PLAY_TOP = 16 };
+
+static inline void mods_picture_scroll(const GBSample *s, int *x, int *y) {
+  *x = s->line_scx[MODS_PLAY_TOP];
+  *y = s->line_scy[MODS_PLAY_TOP];
+}

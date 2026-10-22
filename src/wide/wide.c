@@ -59,6 +59,7 @@ static bool room_shown(const GBSample *s, const GameRam *r) {
 }
 
 // A register difference as a small signed offset (the camera plus the screen shake of up to 3)
+enum { SHAKE = 3 };
 static int wrap_offset(int v) { v &= 0xff; return v > 200 ? v - 256 : v; }
 
 // The background pixel the PPU would draw at screen (x, y) if the screen were wider: the same scroll
@@ -93,6 +94,23 @@ bool wide_window_at(const GBSample *s, int x, int y) {
 
 enum { NOTHING = -1, OUTSIDE = -2 };
 
+// The room-local pixel the background shows at screen (x, y), from the scroll line y was drawn with
+static void room_position(const GBSample *s, int x, int y, int *rx, int *ry) {
+  *rx = wrap_offset(s->line_scx[y] - rd(s, W_OFFSET_X)) + x;
+  *ry = wrap_offset(s->line_scy[y] - rd(s, W_OFFSET_Y)) + y;
+}
+
+bool wide_room_origin(const GBSample *s, bool seasons, int *rx, int *ry) {
+  const GameRam *r = seasons ? &seasons_ram : &ages_ram;
+  if (!room_shown(s, r) || (s->line_lcdc[STATUS_BAR_LINES] & 0x81) != 0x81) return false;
+  room_position(s, 0, STATUS_BAR_LINES, rx, ry);
+  // the play area must show the room, give or take the screen shake: the scroll can also point
+  // at a picture that is not the room (a cutscene panning over its art) while the mode says play
+  int w = rd(s, W_ROOM_WIDTH) * 8, h = rd(s, W_ROOM_HEIGHT) * 8;
+  return w >= FB_W && h >= FB_H - STATUS_BAR_LINES && w <= 256 && h <= 256 &&
+         *rx >= -SHAKE && *rx <= w - FB_W + SHAKE && *ry >= -SHAKE && *ry <= h - (FB_H - STATUS_BAR_LINES) + SHAKE;
+}
+
 // The current room's pixel at screen (x, y), NOTHING outside normal play, or OUTSIDE (with the
 // room-local position) where the screen reaches past the room's edge.
 static int room_or_outside(const GBSample *s, bool seasons, int x, int y, int *rx, int *ry) {
@@ -100,8 +118,7 @@ static int room_or_outside(const GBSample *s, bool seasons, int x, int y, int *r
   if (y < STATUS_BAR_LINES || y >= FB_H || !room_shown(s, r) || (s->line_lcdc[y] & 0x81) != 0x81) return NOTHING;
   if (wide_window_at(s, x < 0 ? 0 : x, y)) return NOTHING;  // a line the window covers shows no room
   // room-local position: outside the room the map holds leftovers of other rooms
-  *rx = wrap_offset(s->line_scx[y] - rd(s, W_OFFSET_X)) + x;
-  *ry = wrap_offset(s->line_scy[y] - rd(s, W_OFFSET_Y)) + y;
+  room_position(s, x, y, rx, ry);
   int width = rd(s, W_ROOM_WIDTH), height = rd(s, W_ROOM_HEIGHT);
   if (width > 32 || height > 32 || *ry < 0 || *ry >= height * 8) return NOTHING;
   if (*rx < 0 || *rx >= width * 8) return OUTSIDE;

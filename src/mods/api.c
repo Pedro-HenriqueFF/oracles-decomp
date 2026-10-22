@@ -299,6 +299,31 @@ static int l_sprites(lua_State *L) {
   return 1;
 }
 
+// Stage 3 Task 6: { x, y, room_x, room_y }. x/y are the hardware scroll (SCX/SCY, 0-255) the play
+// area's first line was drawn with; room_x/room_y the room pixel at the play area's top-left, the
+// same frame sprites() describes, so room_x + sprite.x is the sprite's place in the room. room_x
+// and room_y are left out outside normal play rather than given a position the picture does not
+// show. nil with no picture.
+static int l_camera(lua_State *L) {
+  const ModsFrame *f = mods_current_frame();
+  if (!f->scroll) {
+    lua_pushnil(L);
+    return 1;
+  }
+  lua_createtable(L, 0, 4);
+  lua_pushinteger(L, f->scroll_x);
+  lua_setfield(L, -2, "x");
+  lua_pushinteger(L, f->scroll_y);
+  lua_setfield(L, -2, "y");
+  if (f->origin) {
+    lua_pushinteger(L, f->origin_x);
+    lua_setfield(L, -2, "room_x");
+    lua_pushinteger(L, f->origin_y);
+    lua_setfield(L, -2, "room_y");
+  }
+  return 1;
+}
+
 static int l_draw_rect(lua_State *L) {
   overlay_rect(mods_overlay_mut(), check_int(L, 1), check_int(L, 2), check_int(L, 3),
                check_int(L, 4), check_int(L, 5));
@@ -478,6 +503,7 @@ static int l_load(lua_State *L) {
 // The one list of what the API is. MODDING.md must document exactly these. Kept alphabetical so
 // that cross-check can simply walk both lists in order.
 static const luaL_Reg api[] = {
+  {"camera", l_camera},
   {"collision", l_collision},
   {"draw_icon", l_draw_icon},
   {"draw_rect", l_draw_rect},

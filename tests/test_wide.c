@@ -272,11 +272,87 @@ static void item_icons_decode_from_the_rom(void) {
   free(rom);
 }
 
+// wide_room_origin against the game's own camera (hCameraX/hCameraY, 16-bit) through the first
+// 60000 movie frames. The origin is the drawn picture's, so it equals the camera except while the
+// camera moves (one frame behind: the previous frame's camera) and during a screen shake (up to 3
+// pixels off). Most frames must match exactly, none may be off by more than that, and the camera
+// must have been seen away from 0 on both axes so a swapped or dropped axis cannot pass. Shakes
+// must still count as play (86 and 85 frames in these movies; without the 3-pixel slack, 20 and 5).
+typedef struct {
+  bool seasons;
+  uint16_t cy, cx;
+  int prev_x, prev_y;
+  long shown, exact, lagged, shaken, wrong, moved_x, moved_y;
+} OriginCheck;
+
+static void origin_cb(GB *gb, const GBSample *s, void *ctx) {
+  (void)gb;
+  OriginCheck *c = ctx;
+  int cy = s->hram[c->cy - 0xff80] | s->hram[c->cy - 0xff80 + 1] << 8;
+  int cx = s->hram[c->cx - 0xff80] | s->hram[c->cx - 0xff80 + 1] << 8;
+  int rx, ry;
+  if (wide_room_origin(s, c->seasons, &rx, &ry)) {
+    c->shown++;
+    if (rx >= 16) c->moved_x++;
+    if (ry >= 16) c->moved_y++;
+    if (rx == cx && ry == cy) c->exact++;
+    else if (rx == c->prev_x && ry == c->prev_y) c->lagged++;
+    else if (abs(rx - cx) <= 3 && abs(ry - cy) <= 3) c->shaken++;
+    else {
+      if (!c->wrong) printf("  frame %llu: origin %d,%d, camera %d,%d\n", (unsigned long long)s->frame, rx, ry, cx, cy);
+      c->wrong++;
+    }
+  }
+  c->prev_x = cx;
+  c->prev_y = cy;
+}
+
+static void origin_follows_the_camera(const char *rom_path, const char *inputs, const char *state_path, bool seasons) {
+  size_t n;
+  uint8_t *rom = oracles_read_file(rom_path, &n);
+  if (!rom) SKIP("ROM not present");
+  Tas t;
+  if (!tas_load(&t, inputs)) SKIP("inputs missing");
+  GB *gb = calloc(1, sizeof *gb);
+  gb_init(gb);
+  ASSERT(gb_load_rom(gb, rom, n));
+  gb->cyctab = cyctab_alloc(rom, n);
+  assets_zero_code(rom, n);
+  gb_reset(gb);
+  if (!oracles_load_boot_state(gb, state_path)) SKIP("boot state missing");
+  OriginCheck c = {seasons, seasons ? 0xffa8 : 0xffaa, seasons ? 0xffaa : 0xffac, -1, -1, 0, 0, 0, 0, 0, 0, 0};
+  gb->input_at = tas_cb; gb->input_ctx = &t;
+  gb->frame_cb = origin_cb; gb->frame_ctx = &c;
+  for (int i = 0; i < 60000 && !gb->hung; i++) gb_run_frame(gb);
+  printf("  %ld frames in play: %ld exact, %ld a frame behind, %ld shaken, %ld wrong; camera off 0: x %ld, y %ld\n",
+         c.shown, c.exact, c.lagged, c.shaken, c.wrong, c.moved_x, c.moved_y);
+  ASSERT(c.shown > 10000);
+  ASSERT(c.exact * 10 >= c.shown * 9);
+  ASSERT_EQ(c.wrong, 0);
+  ASSERT(c.shaken >= 50);
+  ASSERT(c.moved_x > 100);
+  ASSERT(c.moved_y > 100);
+  free(gb);
+  free(rom);
+}
+
+static void seasons_room_origin_follows_the_camera(void) {
+  origin_follows_the_camera(GAME_ROM_DIR "/Legend of Zelda, The - Oracle of Seasons (USA, Australia).gbc", TAS_DIR "/seasons-play.inputs",
+                            TAS_DIR "/seasons-boot.state", true);
+}
+
+static void ages_room_origin_follows_the_camera(void) {
+  origin_follows_the_camera(GAME_ROM_DIR "/Legend of Zelda, The - Oracle of Ages (USA, Australia).gbc", TAS_DIR "/ages-consoleverified.inputs",
+                            TAS_DIR "/ages-boot.state", false);
+}
+
 int main(void) {
   if (!getenv("WIDE_ONLY_NEIGHBOURS")) {
     RUN(seasons_room_pixels_match_the_ppu);
     RUN(ages_room_pixels_match_the_ppu);
   }
+  RUN(seasons_room_origin_follows_the_camera);
+  RUN(ages_room_origin_follows_the_camera);
   RUN(item_icons_decode_from_the_rom);
   RUN(seasons_neighbours_match_the_rooms);
   RUN(ages_neighbours_match_the_rooms);

@@ -27,3 +27,6 @@ void wide_render(const GBSample *s, const WideOptions *o, uint8_t *out);
 // not shown there. Inside 0-159 it matches the PPU's background wherever no sprite covers it.
 int wide_room_pixel(const GBSample *s, bool seasons, int x, int y);
 bool wide_window_at(const GBSample *s, int x, int y);
+// The room pixel at the top-left of the play area (screen (0, 16), under the status bar), or false
+// outside normal play (menus, scripted scenes, screen transitions, sidescrolling areas).
+bool wide_room_origin(const GBSample *s, bool seasons, int *rx, int *ry);
