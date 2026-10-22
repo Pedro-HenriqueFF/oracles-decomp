@@ -501,6 +501,19 @@ static void data_folder(char *cache, size_t size, const char *pref) {
   if (!copied || !SDL_CreateDirectory(cache)) {
     fprintf(stderr, "could not set up %s: %s\n", cache, SDL_GetError());
     snprintf(cache, size, "%s", pref);
+    return;
+  }
+  // SDL_GetPrefPath creates the app-data folder and its organization folder; a portable run that
+  // never used them takes them away again (SDL_RemovePath leaves a folder with anything in it)
+  if (on) {
+    char p[1024];
+    snprintf(p, sizeof p, "%s", pref);
+    for (int i = 0; i < 2; i++) {
+      size_t n = strlen(p);
+      while (n && (p[n - 1] == '/' || p[n - 1] == '\\')) p[--n] = 0;
+      if (!n || !SDL_RemovePath(p)) break;
+      while (n && p[n - 1] != '/' && p[n - 1] != '\\') p[--n] = 0;
+    }
   }
 }
 
