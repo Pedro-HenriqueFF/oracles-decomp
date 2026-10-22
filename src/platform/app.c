@@ -41,6 +41,7 @@
 #endif
 #include "wide/wide.h"
 #include "mods/mods.h"
+#include "mods/picture.h"
 #include <stdio.h>
 #include <time.h>
 #include <stdlib.h>
@@ -650,6 +651,8 @@ static void present_game(SDL_Renderer *ren, SDL_Texture *tex, const GBSample *sa
     .room_w = rd_room_w(sample),
     .room_h = rd_room_h(sample),
     .room_group = rd_room_group(sample, seasons),
+    .bg_pal = mods_picture_bg_pal(sample),
+    .oam = mods_picture_oam(sample),
     .rom = rom,
     .rom_size = rom_size,
     .font = &mod_font,

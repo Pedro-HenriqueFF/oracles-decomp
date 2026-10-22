@@ -140,7 +140,7 @@ bool mods_id_valid(const char *id);
 // What the app hands the host each frame: game RAM windows, the picture's dimensions, the
 // current room's geometry, and the resources a mod's drawing bindings need (the ROM for
 // draw_icon, the UI font for draw_text).
-// `wram`/`wram3`/`hram`/`rom`/`font` may each be NULL -- before any ROM/game is actually running,
+// `wram`/`wram3`/`hram`/`bg_pal`/`oam`/`rom`/`font` may each be NULL -- before any ROM/game is actually running,
 // or (in tests) deliberately, to exercise the guards every binding that touches them must have.
 // `wram`, when non-NULL, is always the full 4096 bytes $c000..$cfff: draw_icon relies on that to
 // read `wram + 0x600` as 256 further bytes without a separate bounds check of its own. `wram3`,
@@ -167,6 +167,8 @@ typedef struct {
   int room;                     // the current room, for on_room_change
   int room_w, room_h;           // the room in 8x8 tiles, as wRoomWidth/wRoomHeight hold them
   int room_group;               // the room's group, for callers that need it with `room`
+  const uint8_t *bg_pal;        // the 8 BG palettes the picture was drawn with, 64 bytes, or NULL
+  const uint8_t *oam;           // the OAM the picture was drawn with, 160 bytes, or NULL
   const uint8_t *rom;           // for draw_icon; may be NULL
   size_t rom_size;
   const UiFont *font;           // for draw_text; may be NULL

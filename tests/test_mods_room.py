@@ -182,7 +182,48 @@ with tempfile.TemporaryDirectory() as cache:
             # among them. A NULL or wrong wram3 in app.c cannot produce that frame.
             "local sol_exact = false\n"
             "local sol_nil = false\n"
+            # Task 5: sprites() against the game's own shadow OAM, wOam at $cb00 in bank 0, with
+            # the same visibility filter. The picture's OAM is wOam as DMA'd in the last vblank,
+            # so they agree whenever nothing moved for a frame; one such frame with a sprite on
+            # screen is required. tile_palette has no bank-0 copy to compare with (the game keeps
+            # its palettes in bank 2), so it must be non-nil in a game and show a palette with at
+            # least three distinct colours.
+            "local spr_exact, pal_nil, pal_varied = false, false, false\n"
+            "local function check_sprites()\n"
+            "  local s = oracles.sprites()\n"
+            "  if s == nil then return end\n"
+            "  local want = {}\n"
+            "  for i = 0, 39 do\n"
+            "    local y, x = oracles.rd(0xcb00 + i * 4), oracles.rd(0xcb01 + i * 4)\n"
+            "    if y ~= 0 and y < 160 and x ~= 0 and x < 168 then\n"
+            "      want[#want + 1] = (x - 8) .. '/' .. (y - 16) .. '/' .. oracles.rd(0xcb02 + i * 4) ..\n"
+            "                        '/' .. oracles.rd(0xcb03 + i * 4)\n"
+            "    end\n"
+            "  end\n"
+            "  if #want == 0 or #want ~= #s then return end\n"
+            "  for k, sp in ipairs(s) do\n"
+            "    if want[k] ~= sp.x .. '/' .. sp.y .. '/' .. sp.tile .. '/' .. sp.attr then return end\n"
+            "  end\n"
+            "  spr_exact = true\n"
+            "  oracles.log('sprwatch exact n=' .. #s)\n"
+            "end\n"
+            "local function check_palettes()\n"
+            "  for i = 0, 7 do\n"
+            "    local p = oracles.tile_palette(i)\n"
+            "    if p == nil then\n"
+            "      if not pal_nil then pal_nil = true oracles.log('palwatch nil') end\n"
+            "      return\n"
+            "    end\n"
+            "    local seen, n = {}, 0\n"
+            "    for _, c in ipairs(p) do if not seen[c] then seen[c] = true n = n + 1 end end\n"
+            "    if n >= 3 and not pal_varied then pal_varied = true oracles.log('palwatch varied p=' .. i) end\n"
+            "  end\n"
+            "end\n"
             "oracles.on_frame(function()\n"
+            "  if oracles.room() ~= nil and oracles.room().width > 0 then\n"
+            "    if not spr_exact then check_sprites() end\n"
+            "    if not pal_varied and not pal_nil then check_palettes() end\n"
+            "  end\n"
             "  if sol_exact then return end\n"
             "  local info = oracles.room()\n"
             "  if info == nil or info.width == 0 then return end\n"
@@ -278,4 +319,12 @@ with tempfile.TemporaryDirectory() as cache:
     assert any('solwatch exact' in l for l in sol), (
         f'no frame had every tile\'s oracles.solidity(oracles.metatile(x, y)).raw equal $ce00; '
         f'stderr:\n{r.stderr}')
+    # Task 5: sprites through app.c's .oam, palettes through its .bg_pal.
+    spr = [l for l in r.stderr.splitlines() if 'sprwatch ' in l]
+    assert spr, f'no frame had oracles.sprites() equal wOam\'s visible entries; stderr:\n{r.stderr}'
+    pal = [l for l in r.stderr.splitlines() if 'palwatch ' in l]
+    assert not any('palwatch nil' in l for l in pal), (
+        f'oracles.tile_palette() returned nil during a game, so app.c gave it no palettes: {pal}')
+    assert any('palwatch varied' in l for l in pal), (
+        f'no BG palette had three distinct colours; stderr:\n{r.stderr}')
 print('ok mods_room')

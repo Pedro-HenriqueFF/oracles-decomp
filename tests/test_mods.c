@@ -5,6 +5,7 @@
 #include "mods/mods.h"
 #include "mods/api.h"
 #include "mods/overlay.h"
+#include "mods/picture.h"
 #include "mods/sandbox.h"
 #include "ui/ui.h"
 #include <signal.h>
@@ -4447,6 +4448,135 @@ static void collision_is_nil_without_a_game(void) {
   mods_shutdown();
 }
 
+// ---------------------------------------------------------------------------
+// Stage 3 Task 5: oracles.tile_palette(i) and oracles.sprites().
+// ---------------------------------------------------------------------------
+
+// Little-endian RGB555 with bit 15 dropped, and palettes 0 and 7 at their own 8-byte slots so the
+// i * 8 stride is pinned at both ends. The OBJ-palette-shaped bytes after the 64 are never read.
+static void tile_palette_decodes_each_colour(void) {
+  clear_mods();
+  const char *root = make_mod("palknown", "id=palknown\napi=1\ngames=ages,seasons\n",
+      "oracles.on_frame(function()\n"
+      "  local a, b = oracles.tile_palette(0), oracles.tile_palette(7)\n"
+      "  oracles.log('a=' .. table.concat(a, ',') .. ' b=' .. table.concat(b, ',') .. ' n=' .. #a)\n"
+      "end)\n");
+  ASSERT(mods_init(root, true));
+  static uint8_t wram[0x1000], hram[127], pal[64];
+  const uint8_t p0[8] = {0x1f, 0x00, 0xe0, 0x03, 0x00, 0xfc, 0xff, 0xff};
+  const uint8_t p7[8] = {0x01, 0x00, 0x02, 0x80, 0x34, 0x12, 0x00, 0x00};
+  memcpy(pal, p0, 8);
+  memcpy(pal + 56, p7, 8);
+  memset(pal + 8, 0x55, 48);
+  ModsFrame f = {
+    .wram = wram, .hram = hram, .seasons = true, .width = 160, .room = 1,
+    .room_w = 20, .room_h = 16, .room_group = 0, .bg_pal = pal,
+  };
+  mods_frame(&f);
+  ASSERT(mods_enabled(0));
+  ASSERT(mods_last_log());
+  ASSERT(strstr(mods_last_log(), "a=31,992,31744,32767 b=1,2,4660,0 n=4") != NULL);
+  mods_shutdown();
+}
+
+// A palette index is 0..7: -1, 8, a 2^32 + 3 that would truncate to 3, and a non-integer raise,
+// the first three with the range message.
+static void tile_palette_rejects_indexes_outside_0_to_7(void) {
+  clear_mods();
+  const char *root = make_mod("palrange", "id=palrange\napi=1\ngames=ages,seasons\n",
+      "oracles.on_frame(function()\n"
+      "  local out = {}\n"
+      "  for _, i in ipairs({-1, 8, 4294967296 + 3, 2.5}) do\n"
+      "    local ok, err = pcall(oracles.tile_palette, i)\n"
+      "    out[#out + 1] = tostring(ok) .. (ok and '' or (string.find(tostring(err), '0-7', 1, true) and '/msg' or '/other'))\n"
+      "  end\n"
+      "  oracles.log(table.concat(out, ' '))\n"
+      "end)\n");
+  ASSERT(mods_init(root, true));
+  static uint8_t wram[0x1000], hram[127], pal[64];
+  memset(pal, 0x11, sizeof pal);
+  ModsFrame f = {
+    .wram = wram, .hram = hram, .seasons = true, .width = 160, .room = 1, .bg_pal = pal,
+  };
+  mods_frame(&f);
+  ASSERT(mods_enabled(0));
+  ASSERT(mods_last_log());
+  ASSERT(strstr(mods_last_log(), "false/msg false/msg false/msg false/other") != NULL);
+  mods_shutdown();
+}
+
+// Hidden entries are left out at every edge (y 0 and 160, x 0 and 168) while the entries just
+// inside them (y 1 and 159, x 1 and 167) stay, converted to picture coordinates; slot 39 is
+// there to pin that the walk reaches the last entry.
+static void sprites_lists_only_visible_entries_in_picture_coordinates(void) {
+  clear_mods();
+  const char *root = make_mod("sprvis", "id=sprvis\napi=1\ngames=ages,seasons\n",
+      "oracles.on_frame(function()\n"
+      "  local out = {}\n"
+      "  for _, sp in ipairs(oracles.sprites()) do\n"
+      "    out[#out + 1] = sp.x .. '/' .. sp.y .. '/' .. sp.tile .. '/' .. sp.attr\n"
+      "  end\n"
+      "  oracles.log('n=' .. #out .. ' ' .. table.concat(out, ' '))\n"
+      "end)\n");
+  ASSERT(mods_init(root, true));
+  static uint8_t wram[0x1000], hram[127], oam[160];
+  const uint8_t e[][5] = {
+    {0, 0, 50, 1, 1},       // y 0: hidden
+    {1, 26, 28, 0x40, 0x23},
+    {2, 160, 50, 1, 1},     // y 160: hidden
+    {3, 50, 0, 1, 1},       // x 0: hidden
+    {4, 50, 168, 1, 1},     // x 168: hidden
+    {5, 159, 167, 2, 3},
+    {6, 1, 1, 4, 5},
+    {39, 100, 90, 6, 7},
+  };
+  for (size_t k = 0; k < sizeof e / sizeof e[0]; k++) memcpy(&oam[e[k][0] * 4], &e[k][1], 4);
+  ModsFrame f = {
+    .wram = wram, .hram = hram, .seasons = true, .width = 160, .room = 1, .oam = oam,
+  };
+  mods_frame(&f);
+  ASSERT(mods_enabled(0));
+  ASSERT(mods_last_log());
+  ASSERT(strstr(mods_last_log(), "n=4 20/10/64/35 159/143/2/3 -7/-15/4/5 82/84/6/7") != NULL);
+  mods_shutdown();
+}
+
+// No picture: both are nil, with the game RAM live so only their own pointer checks can be what
+// returns nil.
+static void tile_palette_and_sprites_are_nil_without_a_picture(void) {
+  clear_mods();
+  const char *root = make_mod("picnil", "id=picnil\napi=1\ngames=ages,seasons\n",
+      "oracles.on_frame(function()\n"
+      "  oracles.log('p=' .. tostring(oracles.tile_palette(0)) .. ' s=' .. tostring(oracles.sprites()))\n"
+      "end)\n");
+  ASSERT(mods_init(root, true));
+  static uint8_t wram[0x1000], wram3[0x1000], hram[127];
+  ModsFrame f = {
+    .wram = wram, .wram3 = wram3, .hram = hram, .seasons = true, .width = 160, .room = 1,
+    .room_w = 20, .room_h = 16,
+  };
+  mods_frame(&f);
+  ASSERT(mods_enabled(0));
+  ASSERT(mods_last_log());
+  ASSERT(strstr(mods_last_log(), "p=nil s=nil") != NULL);
+  mods_shutdown();
+}
+
+// app.c fills ModsFrame's bg_pal/oam through these. Line 143 points at snapshot 1 while line 0
+// points at 0, so only "the snapshot line 143 was drawn from" passes -- not the live BG/OBJ
+// palettes or OAM, not the other snapshot, not line 0's.
+static void the_picture_palettes_and_oam_are_the_ones_line_143_was_drawn_from(void) {
+  static GBSample s;
+  memset(s.line_drawn, 0, sizeof s.line_drawn);
+  s.line_drawn[FB_H - 1] = 1;
+  ASSERT(mods_picture_bg_pal(&s) == s.drawn_bg_pal[1]);
+  ASSERT(mods_picture_oam(&s) == s.drawn_oam[1]);
+  s.line_drawn[FB_H - 1] = 0;
+  s.line_drawn[0] = 1;
+  ASSERT(mods_picture_bg_pal(&s) == s.drawn_bg_pal[0]);
+  ASSERT(mods_picture_oam(&s) == s.drawn_oam[0]);
+}
+
 int main(void) {
   // The alarm handler's _exit(1) skips normal stdio teardown (deliberately: calling atexit
   // handlers or flushing from inside a signal handler is not safe), which means any buffered
@@ -4631,5 +4761,10 @@ int main(void) {
   RUN(collision_is_nil_outside_the_room);
   RUN(collision_never_reads_past_the_grid_whatever_the_geometry);
   RUN(collision_is_nil_without_a_game);
+  RUN(tile_palette_decodes_each_colour);
+  RUN(tile_palette_rejects_indexes_outside_0_to_7);
+  RUN(sprites_lists_only_visible_entries_in_picture_coordinates);
+  RUN(tile_palette_and_sprites_are_nil_without_a_picture);
+  RUN(the_picture_palettes_and_oam_are_the_ones_line_143_was_drawn_from);
   return skipped ? 77 : 0;
 }

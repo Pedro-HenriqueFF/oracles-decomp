@@ -132,7 +132,7 @@ Every pixel you draw is opaque; there is no blending. Where you draw nothing, th
 
 ## API reference
 
-Everything a mod can call lives in the `oracles` table. This is the whole of it — sixteen functions.
+Everything a mod can call lives in the `oracles` table. This is the whole of it — eighteen functions.
 Anything not listed here does not exist (and a test fails the build if this list and the real one
 ever disagree).
 
@@ -380,6 +380,29 @@ tiles on top of it** (one Seasons overworld room changes 13 of its 80), so to kn
 where, use `oracles.collision(x, y)`. `solidity` is for questions about a kind of tile: "what does
 metatile `0x12` look like, everywhere it appears".
 
+### `oracles.sprites()`
+
+Returns the sprites on screen as an array of `{ x, y, tile, attr }`, in the hardware's own order, or
+`nil` if there is no picture yet. This is where the game puts Link, enemies, items and effects.
+
+```lua
+local s = oracles.sprites()
+if s then
+  for _, sp in ipairs(s) do oracles.draw_rect(sp.x, sp.y, 8, 1, 0x001f) end   -- a red tick over each
+end
+```
+
+`x` and `y` are the sprite's top-left corner in the 160x144 game picture. In widescreen the game
+picture sits in the middle of a wider screen, so add `(oracles.screen() - 160) // 2` to `x` before
+drawing on it. They can be a little negative for a sprite partly off the top or left edge. `tile` is
+the sprite's tile number (0-255) and `attr` its attribute byte, as the Game Boy Color stores them
+(palette, flips, priority).
+
+Sprites the hardware does not show are left out, so you get the handful that are visible rather than
+all 40 slots. Every sprite is 8 pixels wide; this game draws them 16 tall, and one character is
+usually several sprites side by side. The values are the ones the picture you are looking at was
+drawn with, not ones the game has already moved on to for the next frame.
+
 ### `oracles.store(key, value)`
 
 Saves `value` under `key` in your mod's own `store.ini`, next to its `main.lua`, and returns nothing.
@@ -399,6 +422,20 @@ refusing rather than by quietly mangling your data:
 
 Break one of those and this raises a Lua error — which switches your mod off unless you wrap the call
 in `pcall`. If you are storing something a player typed or a value from the game, check it first.
+
+### `oracles.tile_palette(i)`
+
+Returns background palette `i` as an array of four colours, or `nil` if there is no picture yet. `i`
+is an integer 0-7; anything else **is an error**. Each colour is a 15-bit RGB555 integer, the same
+format `oracles.draw_rect` takes, so you can draw with the game's own colours:
+
+```lua
+local p = oracles.tile_palette(0)
+if p then oracles.draw_rect(4, 4, 8, 8, p[4]) end   -- colours are p[1] to p[4]
+```
+
+These are the palettes the picture you are looking at was drawn with, so they follow the season,
+the tileset and every fade as they happen on screen. Sprite palettes are not exposed.
 
 ## Stable and unstable
 

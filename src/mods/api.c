@@ -250,6 +250,55 @@ static int l_collision(lua_State *L) {
   return 1;
 }
 
+// Stage 3 Task 5: BG palette `i` as four RGB555 colours, the format draw_rect takes. A palette
+// index is 0..7 on the hardware, so anything else raises. Each colour is two little-endian bytes
+// whose bit 15 the hardware ignores. nil with no picture yet.
+static int l_tile_palette(lua_State *L) {
+  int i = check_int(L, 1);
+  luaL_argcheck(L, i >= 0 && i <= 7, 1, "palette must be 0-7");
+  const ModsFrame *f = mods_current_frame();
+  if (!f->bg_pal) {
+    lua_pushnil(L);
+    return 1;
+  }
+  lua_createtable(L, 4, 0);
+  for (int c = 0; c < 4; c++) {
+    const uint8_t *p = &f->bg_pal[i * 8 + c * 2];
+    lua_pushinteger(L, (p[0] | p[1] << 8) & 0x7fff);
+    lua_rawseti(L, -2, c + 1);
+  }
+  return 1;
+}
+
+// Stage 3 Task 5: the sprites on screen, as { x, y, tile, attr } in OAM order, with x/y the
+// sprite's top-left in the 160x144 picture (OAM stores them +8 and +16). An entry the hardware
+// does not show -- OAM y of 0 or 160 and up, x of 0 or 168 and up -- is left out, so the count is
+// what is visible, not 40. nil with no picture yet.
+static int l_sprites(lua_State *L) {
+  const ModsFrame *f = mods_current_frame();
+  if (!f->oam) {
+    lua_pushnil(L);
+    return 1;
+  }
+  lua_createtable(L, 40, 0);
+  int n = 0;
+  for (int i = 0; i < 40; i++) {
+    const uint8_t *o = &f->oam[i * 4];
+    if (o[0] == 0 || o[0] >= 160 || o[1] == 0 || o[1] >= 168) continue;
+    lua_createtable(L, 0, 4);
+    lua_pushinteger(L, o[1] - 8);
+    lua_setfield(L, -2, "x");
+    lua_pushinteger(L, o[0] - 16);
+    lua_setfield(L, -2, "y");
+    lua_pushinteger(L, o[2]);
+    lua_setfield(L, -2, "tile");
+    lua_pushinteger(L, o[3]);
+    lua_setfield(L, -2, "attr");
+    lua_rawseti(L, -2, ++n);
+  }
+  return 1;
+}
+
 static int l_draw_rect(lua_State *L) {
   overlay_rect(mods_overlay_mut(), check_int(L, 1), check_int(L, 2), check_int(L, 3),
                check_int(L, 4), check_int(L, 5));
@@ -444,7 +493,9 @@ static const luaL_Reg api[] = {
   {"screen", l_screen},
   {"setting", l_setting},
   {"solidity", l_solidity},
+  {"sprites", l_sprites},
   {"store", l_store},
+  {"tile_palette", l_tile_palette},
   {NULL, NULL},
 };
 
