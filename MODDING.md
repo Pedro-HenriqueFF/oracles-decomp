@@ -132,7 +132,7 @@ Every pixel you draw is opaque; there is no blending. Where you draw nothing, th
 
 ## API reference
 
-Everything a mod can call lives in the `oracles` table. This is the whole of it — thirteen functions.
+Everything a mod can call lives in the `oracles` table. This is the whole of it — sixteen functions.
 Anything not listed here does not exist (and a test fails the build if this list and the real one
 ever disagree).
 
@@ -140,6 +140,36 @@ Arguments called *integer* must be whole numbers: `5` and `5.0` are both fine, `
 rather than a rounded 5, so round it yourself with `math.floor`. A number far too big for a 32-bit
 integer is clamped to the end of that range rather than wrapping around. Anything that isn't a
 number at all raises an error too, which switches your mod off unless you catch it with `pcall`.
+
+### `oracles.collision(x, y)`
+
+Returns how solid the metatile at metatile coordinates `(x, y)` in the current room is, as a table,
+or `nil` if there is no such tile. This is the value the game itself tests when something moves, so
+it includes whatever the room changed on top of the tileset's defaults (see `oracles.solidity`).
+
+```lua
+local c = oracles.collision(4, 2)
+if c and c.solid then oracles.log("wall at 4,2") end
+```
+
+The table:
+
+| field | meaning |
+|---|---|
+| `raw` | the game's own byte, 0-255 |
+| `special` | `true` when `raw` is `0x10` or more (see below) |
+| `solid` | `true` only when the whole metatile is solid; `nil` when `special` |
+| `quarters` | `{ tl, tr, bl, br }`, a boolean for each 8x8 quarter; `nil` when `special` |
+
+Below `0x10`, the byte is four bits, one per quarter: `0x08` top-left, `0x04` top-right, `0x02`
+bottom-left, `0x01` bottom-right. So `0x0f` is a solid block, `0x0c` a block whose top half is solid,
+`0x05` a block whose right half is solid, and `0` is open ground. `special` values (holes, ledges,
+bridges, water edges and the like) point into a table in the ROM that this API does not expose yet,
+and what they mean depends on what is moving, so `solid` and `quarters` are left out rather than
+guessed. `raw` is still there.
+
+`x` and `y` follow the same rules as `oracles.metatile`: it returns `nil` with no game running, or for
+a coordinate outside `oracles.room()`'s `width`/`height`.
 
 ### `oracles.draw_icon(item, x, y)`
 
@@ -331,6 +361,24 @@ across all mods; asking for more raises an error.
 Two honest caveats: **there is no settings menu for these yet** (it comes with the mod manager), so
 today the function always returns your declared default; and a row's value is **not saved** — every
 session starts at the default. Use `oracles.store` for anything that must survive a restart.
+
+### `oracles.solidity(id)`
+
+Returns how solid metatile `id` is in the current tileset by default, in the same table
+`oracles.collision` returns. `id` is a metatile id, an integer 0-255, as `oracles.metatile` gives you;
+anything outside 0-255 **is an error**, not some other tile's answer. Returns `nil` if no game is
+running.
+
+```lua
+local id = oracles.metatile(0, 0)
+local s = id and oracles.solidity(id)
+if s and s.solid then oracles.log("metatile " .. id .. " is a wall in this tileset") end
+```
+
+This is the tileset's table, which the game reads when it loads a room. **Rooms change some of their
+tiles on top of it** (one Seasons overworld room changes 13 of its 80), so to know what is solid
+where, use `oracles.collision(x, y)`. `solidity` is for questions about a kind of tile: "what does
+metatile `0x12` look like, everywhere it appears".
 
 ### `oracles.store(key, value)`
 

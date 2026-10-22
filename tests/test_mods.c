@@ -4232,6 +4232,221 @@ static void metatile_clamps_a_hostile_huge_coordinate_rather_than_wrapping(void)
   mods_shutdown();
 }
 
+// ---------------------------------------------------------------------------
+// Stage 3 Task 4: oracles.solidity(id) and oracles.collision(x, y).
+// ---------------------------------------------------------------------------
+
+// Shared Lua: one collision table as a compact string, so a single log line pins every field.
+#define COL_FMT_LUA \
+  "local function fmt(c)\n" \
+  "  if c == nil then return 'nil' end\n" \
+  "  local q = c.quarters\n" \
+  "  local qs = q == nil and 'noq' or ((q.tl and 'T' or '-') .. (q.tr and 'T' or '-') ..\n" \
+  "                                    (q.bl and 'B' or '-') .. (q.br and 'B' or '-'))\n" \
+  "  return c.raw .. ':' .. tostring(c.special) .. ':' .. tostring(c.solid) .. ':' .. qs\n" \
+  "end\n"
+
+// Each quarter bit on its own, so a swapped pair of bits cannot pass: 8 is only top-left, 4 only
+// top-right, 2 only bottom-left, 1 only bottom-right (the order the ROM's _simpleCollision
+// tests). Bank 0 holds different bytes at the same $xb00 offsets, so reading wram instead of
+// wram3 shows up too.
+static void solidity_reads_bank3_and_decodes_each_quarter(void) {
+  clear_mods();
+  const char *root = make_mod("solquarters", "id=solquarters\napi=1\ngames=ages,seasons\n",
+      COL_FMT_LUA
+      "oracles.on_frame(function()\n"
+      "  local out = {}\n"
+      "  for _, id in ipairs({0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17}) do\n"
+      "    out[#out + 1] = fmt(oracles.solidity(id))\n"
+      "  end\n"
+      "  oracles.log(table.concat(out, ' '))\n"
+      "end)\n");
+  ASSERT(mods_init(root, true));
+  static uint8_t wram[0x1000], wram3[0x1000], hram[127];
+  const uint8_t vals[8] = {0x08, 0x04, 0x02, 0x01, 0x0f, 0x0e, 0x00, 0x1a};
+  for (int i = 0; i < 8; i++) {
+    wram3[0xb10 + i] = vals[i];
+    wram[0xb10 + i] = 0x0f;
+  }
+  ModsFrame f = {
+    .wram = wram, .wram3 = wram3, .hram = hram, .seasons = true, .width = 160, .room = 1,
+    .room_w = 20, .room_h = 16, .room_group = 0,
+  };
+  mods_frame(&f);
+  ASSERT(mods_enabled(0));
+  ASSERT(mods_last_log());
+  ASSERT(strstr(mods_last_log(),
+                "8:false:false:T--- 4:false:false:-T-- 2:false:false:--B- 1:false:false:---B "
+                "15:false:true:TTBB 14:false:false:TTB- 0:false:false:---- 26:true:nil:noq") != NULL);
+  mods_shutdown();
+}
+
+// An id is a byte. -1, 256, a 2^32 + 5 that a truncating cast would turn into 5, and a
+// non-integer all raise rather than reading some other tile's entry; 0 and 255 are the edges
+// that must still work. wram3[5] is set so a wrapped 2^32 + 5 would visibly read a value.
+static void solidity_rejects_ids_outside_a_byte(void) {
+  clear_mods();
+  const char *root = make_mod("solrange", "id=solrange\napi=1\ngames=ages,seasons\n",
+      "oracles.on_frame(function()\n"
+      "  local out = {}\n"
+      "  for _, id in ipairs({-1, 256, 4294967296 + 5, -4294967296, 1.5}) do\n"
+      "    local ok, err = pcall(oracles.solidity, id)\n"
+      "    out[#out + 1] = tostring(ok) .. (ok and '' or (string.find(tostring(err), '0-255', 1, true) and '/msg' or '/other'))\n"
+      "  end\n"
+      "  out[#out + 1] = 'lo=' .. oracles.solidity(0).raw\n"
+      "  out[#out + 1] = 'hi=' .. oracles.solidity(255).raw\n"
+      "  oracles.log(table.concat(out, ' '))\n"
+      "end)\n");
+  ASSERT(mods_init(root, true));
+  static uint8_t wram[0x1000], wram3[0x1000], hram[127];
+  wram3[0xb00] = 0x03;
+  wram3[0xb05] = 0x0f;
+  wram3[0xbff] = 0x0c;
+  ModsFrame f = {
+    .wram = wram, .wram3 = wram3, .hram = hram, .seasons = true, .width = 160, .room = 1,
+    .room_w = 20, .room_h = 16, .room_group = 0,
+  };
+  mods_frame(&f);
+  ASSERT(mods_enabled(0));
+  ASSERT(mods_last_log());
+  ASSERT(strstr(mods_last_log(), "false/msg false/msg false/msg false/msg false/other lo=3 hi=12") != NULL);
+  mods_shutdown();
+}
+
+// No bank 3 (the launcher): nil, never a table claiming 0, which would read as "walkable". Bank 0
+// is live here on purpose, so the wram3 check itself is what must catch it.
+static void solidity_is_nil_without_bank3(void) {
+  clear_mods();
+  const char *root = make_mod("solnil", "id=solnil\napi=1\ngames=ages,seasons\n",
+      "oracles.on_frame(function()\n"
+      "  oracles.log('s=' .. tostring(oracles.solidity(0)))\n"
+      "end)\n");
+  ASSERT(mods_init(root, true));
+  static uint8_t wram[0x1000], hram[127];
+  wram[0xb00] = 0x0f;
+  ModsFrame f = {
+    .wram = wram, .wram3 = NULL, .hram = hram, .seasons = true, .width = 160, .room = 1,
+    .room_w = 20, .room_h = 16, .room_group = 0,
+  };
+  mods_frame(&f);
+  ASSERT(mods_enabled(0));
+  ASSERT(mods_last_log());
+  ASSERT(strstr(mods_last_log(), "s=nil") != NULL);
+  mods_shutdown();
+}
+
+// collision(x, y) reads $ce00 + y*16 + x and decodes it. Two placed bytes pin the address math;
+// the same offsets in bank 3 hold other values so a wrong pointer shows.
+static void collision_reads_the_room_grid_at_known_coordinates(void) {
+  clear_mods();
+  const char *root = make_mod("colknown", "id=colknown\napi=1\ngames=ages,seasons\n",
+      COL_FMT_LUA
+      "oracles.on_frame(function()\n"
+      "  oracles.log('a=' .. fmt(oracles.collision(3, 0)) .. ' b=' .. fmt(oracles.collision(7, 2))\n"
+      "              .. ' c=' .. fmt(oracles.collision(0, 7)))\n"
+      "end)\n");
+  ASSERT(mods_init(root, true));
+  static uint8_t wram[0x1000], wram3[0x1000], hram[127];
+  wram[0xe00 + 0 * 16 + 3] = 0x0c;
+  wram[0xe00 + 2 * 16 + 7] = 0x05;
+  wram[0xe00 + 7 * 16 + 0] = 0x13;
+  wram3[0xe00 + 0 * 16 + 3] = 0x0f;
+  wram3[0xe00 + 2 * 16 + 7] = 0x0f;
+  ModsFrame f = {
+    .wram = wram, .wram3 = wram3, .hram = hram, .seasons = true, .width = 160, .room = 1,
+    .room_w = 20, .room_h = 16, .room_group = 0,
+  };
+  mods_frame(&f);
+  ASSERT(mods_enabled(0));
+  ASSERT(mods_last_log());
+  ASSERT(strstr(mods_last_log(), "a=12:false:false:TT-- b=5:false:false:-T-B c=19:true:nil:noq") != NULL);
+  mods_shutdown();
+}
+
+// The same bounds as metatile: the last real column/row work, the first past them is nil even
+// though the 16-byte stride still has a (nonzero) byte there, and negatives and a hostile 2^32 + 5
+// are nil rather than wrapping onto column 5.
+static void collision_is_nil_outside_the_room(void) {
+  clear_mods();
+  const char *root = make_mod("colbounds", "id=colbounds\napi=1\ngames=ages,seasons\n",
+      "oracles.on_frame(function()\n"
+      "  local function r(x, y) local c = oracles.collision(x, y) return c and c.raw or 'nil' end\n"
+      "  oracles.log('last=' .. r(9, 0) .. ' pad=' .. r(10, 0) .. ' far=' .. r(15, 0) ..\n"
+      "              ' lasty=' .. r(0, 7) .. ' toohigh=' .. r(0, 8) .. ' negx=' .. r(-1, 0) ..\n"
+      "              ' negy=' .. r(0, -1) .. ' big=' .. r(4294967296 + 5, 0) ..\n"
+      "              ' bigy=' .. r(0, 4294967296) .. ' nbig=' .. r(-4294967296 - 5, 0))\n"
+      "end)\n");
+  ASSERT(mods_init(root, true));
+  static uint8_t wram[0x1000], wram3[0x1000], hram[127];
+  wram[0xe00 + 9] = 0x0a;
+  wram[0xe00 + 10] = 0xff;
+  wram[0xe00 + 15] = 0xff;
+  wram[0xe00 + 7 * 16] = 0x03;
+  wram[0xe00 + 8 * 16] = 0xff;
+  wram[0xe00 + 5] = 0x0f;
+  ModsFrame f = {
+    .wram = wram, .wram3 = wram3, .hram = hram, .seasons = true, .width = 160, .room = 1,
+    .room_w = 20, .room_h = 16, .room_group = 0,
+  };
+  mods_frame(&f);
+  ASSERT(mods_enabled(0));
+  ASSERT(mods_last_log());
+  ASSERT(strstr(mods_last_log(), "last=10 pad=nil far=nil lasty=3 toohigh=nil negx=nil negy=nil "
+                                 "big=nil bigy=nil nbig=nil") != NULL);
+  mods_shutdown();
+}
+
+// The largest room the game has is 15x11 metatiles; a geometry wider than the 16-byte stride must
+// not let x = 16 alias row 1 column 0, and one taller than the 0xc0-byte grid must still come back
+// nil past $cebf rather than reading the layout table that follows it at $cf00. metatile gets the
+// same check against $cf00's own row 1.
+static void collision_never_reads_past_the_grid_whatever_the_geometry(void) {
+  clear_mods();
+  const char *root = make_mod("colgeom", "id=colgeom\napi=1\ngames=ages,seasons\n",
+      "oracles.on_frame(function()\n"
+      "  local function r(x, y) local c = oracles.collision(x, y) return c and c.raw or 'nil' end\n"
+      "  oracles.log('in=' .. r(15, 11) .. ' out=' .. r(0, 12) .. ' wide=' .. r(16, 11) ..\n"
+      "              ' alias=' .. r(16, 0) .. ' malias=' .. tostring(oracles.metatile(16, 0)))\n"
+      "end)\n");
+  ASSERT(mods_init(root, true));
+  static uint8_t wram[0x1000], wram3[0x1000], hram[127];
+  wram[0xe00 + 11 * 16 + 15] = 0x08;
+  wram[0xe00 + 16] = 0x0f;
+  wram[0xf00] = 0x0f;
+  wram[0xf00 + 0x10] = 0x0f;
+  ModsFrame f = {
+    .wram = wram, .wram3 = wram3, .hram = hram, .seasons = true, .width = 160, .room = 1,
+    .room_w = 200, .room_h = 200, .room_group = 0,
+  };
+  mods_frame(&f);
+  ASSERT(mods_enabled(0));
+  ASSERT(mods_last_log());
+  ASSERT(strstr(mods_last_log(), "in=8 out=nil wide=nil alias=nil malias=nil") != NULL);
+  mods_shutdown();
+}
+
+// No game (wram NULL), with a normal room's geometry and a live bank 3 alongside, so only the
+// wram check can be what returns nil.
+static void collision_is_nil_without_a_game(void) {
+  clear_mods();
+  const char *root = make_mod("colnil", "id=colnil\napi=1\ngames=ages,seasons\n",
+      "oracles.on_frame(function()\n"
+      "  oracles.log('c=' .. tostring(oracles.collision(0, 0)))\n"
+      "end)\n");
+  ASSERT(mods_init(root, true));
+  static uint8_t wram3[0x1000];
+  wram3[0xe00] = 0x0f;
+  ModsFrame f = {
+    .wram = NULL, .wram3 = wram3, .hram = NULL, .seasons = true, .width = 160, .room = 0,
+    .room_w = 20, .room_h = 16, .room_group = 0,
+  };
+  mods_frame(&f);
+  ASSERT(mods_enabled(0));
+  ASSERT(mods_last_log());
+  ASSERT(strstr(mods_last_log(), "c=nil") != NULL);
+  mods_shutdown();
+}
+
 int main(void) {
   // The alarm handler's _exit(1) skips normal stdio teardown (deliberately: calling atexit
   // handlers or flushing from inside a signal handler is not safe), which means any buffered
@@ -4409,5 +4624,12 @@ int main(void) {
   RUN(metatile_is_nil_before_any_game_is_running);
   RUN(metatile_is_nil_when_wram_is_null_even_with_room_geometry_set);
   RUN(metatile_clamps_a_hostile_huge_coordinate_rather_than_wrapping);
+  RUN(solidity_reads_bank3_and_decodes_each_quarter);
+  RUN(solidity_rejects_ids_outside_a_byte);
+  RUN(solidity_is_nil_without_bank3);
+  RUN(collision_reads_the_room_grid_at_known_coordinates);
+  RUN(collision_is_nil_outside_the_room);
+  RUN(collision_never_reads_past_the_grid_whatever_the_geometry);
+  RUN(collision_is_nil_without_a_game);
   return skipped ? 77 : 0;
 }

@@ -148,6 +148,19 @@ with tempfile.TemporaryDirectory() as cache:
             "  -- One column past the room's own width, still inside the 16-byte stride: must be\n"
             "  -- nil, not whatever padding byte wRoomLayout actually holds there.\n"
             "  local oob_nil = info == nil or oracles.metatile(info.width, 0) == nil\n"
+            "  -- Task 4: oracles.collision(x, y).raw against $ce00 read through oracles.rd.\n"
+            "  local col_ok = true\n"
+            "  local col_nonzero = false\n"
+            "  if info ~= nil then\n"
+            "    for y = 0, info.height - 1 do\n"
+            "      for x = 0, info.width - 1 do\n"
+            "        local c = oracles.collision(x, y)\n"
+            "        local raw = oracles.rd(0xce00 + y * 16 + x)\n"
+            "        if c == nil or c.raw ~= raw then col_ok = false end\n"
+            "        if raw ~= 0 then col_nonzero = true end\n"
+            "      end\n"
+            "    end\n"
+            "  end\n"
             "  oracles.log('roomwatch room=' .. r .. ' ok=' .. tostring(ok) ..\n"
             "              ' group=' .. (info and info.group or -1) ..\n"
             "              ' rawgroup=' .. raw_group ..\n"
@@ -157,7 +170,39 @@ with tempfile.TemporaryDirectory() as cache:
             "              ' rawh=' .. raw_h ..\n"
             "              ' metaok=' .. tostring(meta_ok) ..\n"
             "              ' metanonzero=' .. tostring(meta_nonzero) ..\n"
-            "              ' oobnil=' .. tostring(oob_nil))\n"
+            "              ' oobnil=' .. tostring(oob_nil) ..\n"
+            "              ' colok=' .. tostring(col_ok) ..\n"
+            "              ' colnonzero=' .. tostring(col_nonzero))\n"
+            "end)\n"
+            # Task 4: bank 3 has no oracles.rd window, so solidity is checked against what the
+            # game builds from it: loadRoomCollisions fills $ce00 with w3TileCollisions[layout id],
+            # then a room's objects may change some tiles (13 of 80 in Seasons room $98, none in
+            # room $a7). So at least one frame must show a whole room where
+            # solidity(metatile(x, y)) equals the $ce00 byte everywhere, with a non-zero one
+            # among them. A NULL or wrong wram3 in app.c cannot produce that frame.
+            "local sol_exact = false\n"
+            "local sol_nil = false\n"
+            "oracles.on_frame(function()\n"
+            "  if sol_exact then return end\n"
+            "  local info = oracles.room()\n"
+            "  if info == nil or info.width == 0 then return end\n"
+            "  local all, nonzero = true, false\n"
+            "  for y = 0, info.height - 1 do\n"
+            "    for x = 0, info.width - 1 do\n"
+            "      local s = oracles.solidity(oracles.metatile(x, y))\n"
+            "      local raw = oracles.rd(0xce00 + y * 16 + x)\n"
+            "      if s == nil then\n"
+            "        if not sol_nil then sol_nil = true oracles.log('solwatch nil room=' .. info.room) end\n"
+            "        return\n"
+            "      end\n"
+            "      if s.raw ~= raw then all = false end\n"
+            "      if raw ~= 0 then nonzero = true end\n"
+            "    end\n"
+            "  end\n"
+            "  if all and nonzero then\n"
+            "    sol_exact = true\n"
+            "    oracles.log('solwatch exact room=' .. info.room)\n"
+            "  end\n"
             "end)\n")
 
     max_frames = NFRAMES + 40
@@ -216,4 +261,21 @@ with tempfile.TemporaryDirectory() as cache:
     oob_failures = [d for d in parsed if d['oobnil'] != 'true']
     assert not oob_failures, (
         f'oracles.metatile(width, 0) was not nil for a real room: {oob_failures}')
+    # Task 4: collision(x, y) against the same $ce00 bytes read through oracles.rd, with its own
+    # non-vacuity guard (a grid of zeroes would agree with an always-zero binding).
+    assert any(d['colnonzero'] == 'true' for d in parsed), (
+        f'never observed a non-zero collision byte via oracles.rd(0xce00+...); the '
+        f'oracles.collision() comparison would be vacuous. stderr:\n{r.stderr}')
+    col_mismatches = [d for d in parsed if d['colok'] != 'true']
+    assert not col_mismatches, (
+        f'oracles.collision() disagreed with independently-read raw bytes: {col_mismatches}')
+
+    # Task 4: solidity reads WRAM bank 3 through app.c's .wram3. Pinned by the frame above where a
+    # whole room's solidity(metatile) matched $ce00 with a non-zero value in it.
+    sol = [l for l in r.stderr.splitlines() if 'solwatch ' in l]
+    assert not any('solwatch nil' in l for l in sol), (
+        f'oracles.solidity() returned nil during a game, so app.c gave it no bank 3: {sol}')
+    assert any('solwatch exact' in l for l in sol), (
+        f'no frame had every tile\'s oracles.solidity(oracles.metatile(x, y)).raw equal $ce00; '
+        f'stderr:\n{r.stderr}')
 print('ok mods_room')

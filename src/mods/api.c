@@ -163,7 +163,8 @@ static int l_room(lua_State *L) {
 //     even after the room-bounds check above -- which cannot happen for any room_w/room_h the
 //     real game has ever produced (room_h/2 tops out at 11, so y*16+x tops out at 175, inside
 //     0xc0 == 192), but costs nothing to check and turns "a future room geometry no one has seen
-//     yet" into another nil rather than a read past the 0xc0 bytes this table actually occupies.
+//     yet" into another nil rather than a read past the 0xc0 bytes this table actually occupies;
+//   - x of 16 or more, for the same reason: past the stride it would alias the next row.
 static int l_metatile(lua_State *L) {
   int x = check_int(L, 1);
   int y = check_int(L, 2);
@@ -173,7 +174,7 @@ static int l_metatile(lua_State *L) {
     return 1;
   }
   int mw = f->room_w / 2, mh = f->room_h / 2;
-  if (x < 0 || y < 0 || x >= mw || y >= mh) {
+  if (x < 0 || y < 0 || x >= mw || y >= mh || x >= 16) {
     lua_pushnil(L);
     return 1;
   }
@@ -183,6 +184,69 @@ static int l_metatile(lua_State *L) {
     return 1;
   }
   lua_pushinteger(L, f->wram[0xf00 + idx]);
+  return 1;
+}
+
+// Stage 3 Task 4: a collision value, raw and decoded. Below $10 it is four quarter-tile bits,
+// verified by running the ROM's own _simpleCollision in the interpreter for every quarter in both
+// games: bit 3 top-left, bit 2 top-right, bit 1 bottom-left, bit 0 bottom-right. $10 and above
+// indexes a ROM table of octant masks (holes, ledges, bridges) that also depends on which check
+// the game is making, so `solid` and `quarters` are left nil rather than guessed.
+static void push_collision(lua_State *L, int v) {
+  lua_createtable(L, 0, 4);
+  lua_pushinteger(L, v);
+  lua_setfield(L, -2, "raw");
+  bool special = v >= 0x10;
+  lua_pushboolean(L, special);
+  lua_setfield(L, -2, "special");
+  if (special) return;
+  lua_pushboolean(L, v == 0x0f);
+  lua_setfield(L, -2, "solid");
+  lua_createtable(L, 0, 4);
+  lua_pushboolean(L, v & 8);
+  lua_setfield(L, -2, "tl");
+  lua_pushboolean(L, v & 4);
+  lua_setfield(L, -2, "tr");
+  lua_pushboolean(L, v & 2);
+  lua_setfield(L, -2, "bl");
+  lua_pushboolean(L, v & 1);
+  lua_setfield(L, -2, "br");
+  lua_setfield(L, -2, "quarters");
+}
+
+// The tileset's default collision for metatile `id`, from w3TileCollisions ($db00, WRAM bank 3).
+// An id is a byte, so anything outside 0..255 is the mod's mistake and raises rather than being
+// masked into some other tile's answer. nil when bank 3 is not there (no game running).
+static int l_solidity(lua_State *L) {
+  int id = check_int(L, 1);
+  luaL_argcheck(L, id >= 0 && id <= 0xff, 1, "metatile id must be 0-255");
+  const ModsFrame *f = mods_current_frame();
+  if (!f->wram3) {
+    lua_pushnil(L);
+    return 1;
+  }
+  push_collision(L, f->wram3[0xb00 + id]);
+  return 1;
+}
+
+// The live collision at metatile (x, y), from wRoomCollisions ($ce00, bank 0): the tileset default
+// plus whatever the room's objects set on load, so it can differ from solidity(metatile(x, y)) --
+// 13 of 80 tiles do in Seasons overworld room $98. Same bounds and nil rules as l_metatile: the
+// 16-byte stride's padding (the game writes $ff there) is not a tile.
+static int l_collision(lua_State *L) {
+  int x = check_int(L, 1);
+  int y = check_int(L, 2);
+  const ModsFrame *f = mods_current_frame();
+  if (!f->wram) {
+    lua_pushnil(L);
+    return 1;
+  }
+  int mw = f->room_w / 2, mh = f->room_h / 2;
+  if (x < 0 || y < 0 || x >= mw || y >= mh || x >= 16 || y * 16 + x >= 0xc0) {
+    lua_pushnil(L);
+    return 1;
+  }
+  push_collision(L, f->wram[0xe00 + y * 16 + x]);
   return 1;
 }
 
@@ -365,6 +429,7 @@ static int l_load(lua_State *L) {
 // The one list of what the API is. MODDING.md must document exactly these. Kept alphabetical so
 // that cross-check can simply walk both lists in order.
 static const luaL_Reg api[] = {
+  {"collision", l_collision},
   {"draw_icon", l_draw_icon},
   {"draw_rect", l_draw_rect},
   {"draw_text", l_draw_text},
@@ -378,6 +443,7 @@ static const luaL_Reg api[] = {
   {"room", l_room},
   {"screen", l_screen},
   {"setting", l_setting},
+  {"solidity", l_solidity},
   {"store", l_store},
   {NULL, NULL},
 };
