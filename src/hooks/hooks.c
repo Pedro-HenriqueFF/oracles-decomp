@@ -396,6 +396,22 @@ void asm_call(GB *gb, uint16_t target, uint16_t ret_addr) {
   if (hooklog) fprintf(stderr, "ASM< %04x mc %llu sp %04x ime %d\n", target, (unsigned long long)gb->mcycles, gb->sp, gb->ime);
 }
 
+// For CALL_C_ when the callee is not that C: a callee that returns from its caller (pop, ret) comes
+// back here, so the C caller unwinds through hook_continue as it does after the callee's C. A handoff
+// would resume at the caller's return address, which the native build has no code for.
+void asm_call_c(GB *gb, uint16_t target, uint16_t ret_addr) {
+  uint16_t sp0 = gb->sp;
+  uint32_t sl0 = gb->sp_loads;
+  gb->pc = target;
+  depth--;
+  while (!(gb->pc == ret_addr && gb->sp == (uint16_t)(sp0 + 2)) && !gb->hung) {
+    if (hook_mode == HOOK_MODE_VERIFY && gb->sp_loads != sl0) { depth++; hook_handoff(gb, gb->pc); }
+    if ((uint16_t)(gb->sp - sp0) > 2 && (uint16_t)(gb->sp - sp0) < 0x8000) break;
+    gb->step(gb);
+  }
+  depth++;
+}
+
 void hook_continue(GB *gb, uint16_t pc, uint16_t sp0) {
   uint16_t ret_addr = (uint16_t)(bus_read(gb, sp0) | (bus_read(gb, sp0 + 1) << 8));
   uint32_t sl0 = gb->sp_loads;
