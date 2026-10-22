@@ -3,7 +3,7 @@
 #include "gui/widgets.h"
 
 static const char *const tab_labels[UI_GAMES + 1] = {"Ages", "Seasons", "Settings"};
-static const char *const home_labels[HOME_ROWS] = {"Resume", "Slot 1", "Slot 2", "Slot 3", "Slot 4", "Save files", "Title screen"};
+static const char *const home_labels[HOME_ROWS] = {"Resume", "Slot 1", "Slot 2", "Slot 3", "Slot 4", "Save files", "Title screen", "Add ROM..."};
 
 static void not_installed(Home *h, const GuiTheme *t, int *button) {
   CLAY({.layout = {.sizing = {CLAY_SIZING_GROW(0)}, .layoutDirection = CLAY_TOP_TO_BOTTOM, .childGap = gui_px(12),
@@ -100,7 +100,8 @@ int gui_home(Home *h, const GuiTheme *t, const GuiFrame *f, SettingsMenu *sm, co
       else if (h->files_page) files_page(h, t, &button);
       else game_rows(h, t, &button);
     }
-    hint_line(t, f, h->l.settings_tab ? "Enter change   Esc back" : "Enter play   Left/Right switch game   Esc quit");
+    const char *hint = h->l.settings_tab ? hint_of(f, "change", "back") : gui_str("%s play   Left/Right switch game   %s quit", hint_ok(f), hint_back(f)).chars;
+    hint_line(t, f, hint);
   }
   return button;
 }

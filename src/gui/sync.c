@@ -29,7 +29,7 @@ int gui_sync(SyncMenu *m, const GuiTheme *t, const GuiFrame *f, bool *reveal) {
   gui_begin(page_scale(f));
   int tapped = GUI_NONE, sel = (int)m->sel;
   PAGE(t, f) {
-    if (header(t, "Save sync", f->hints ? "Enter select  Esc back" : NULL)) tapped = GUI_BACK;
+    if (header(t, "Save sync", f->hints ? hint_of(f, "select", "back") : NULL)) tapped = GUI_BACK;
     CLAY({.layout = {.sizing = {CLAY_SIZING_GROW(0)}, .layoutDirection = CLAY_TOP_TO_BOTTOM, .childGap = gui_px(6), .padding = {gui_px(14), gui_px(14), gui_px(20), gui_px(18)}}}) {
       if (m->on) sync_status(m, t, reveal);
       else CLAY_TEXT(CLAY_STRING("Keep your saves and save states in step across your devices."), gui_text(SMALL, t->paper));
@@ -48,7 +48,8 @@ int gui_code(CodeEntry *e, const GuiTheme *t, const GuiFrame *f) {
   gui_begin(page_scale(f));
   int tapped = GUI_NONE;
   PAGE(t, f) {
-    if (header(t, "Enter code", f->hints ? "Type it  Esc back" : NULL)) tapped = GUI_BACK;
+    const char *hint = f->hints ? gui_str("Type it   %s back", hint_back(f)).chars : NULL;
+    if (header(t, "Enter code", hint)) tapped = GUI_BACK;
     paragraph(CLAY_STRING("Type the 16-digit code from your other device's Save sync page."), SMALL, t->paper, 8, 20);
     // four groups of four boxes, the one being typed into lit
     CLAY({.layout = {.sizing = {CLAY_SIZING_GROW(0)}, .layoutDirection = CLAY_TOP_TO_BOTTOM, .childGap = gui_px(12), .childAlignment = {.x = CLAY_ALIGN_X_CENTER},
@@ -93,7 +94,7 @@ int gui_conflict(ConflictView *v, const GuiTheme *t, const GuiFrame *f) {
   int tapped = GUI_NONE;
   int64_t now = now_time();
   PAGE(t, f) {
-    if (header(t, "Choose a save", f->hints ? "Enter keep  Esc later" : NULL)) tapped = GUI_BACK;
+    if (header(t, "Choose a save", f->hints ? hint_of(f, "keep", "later") : NULL)) tapped = GUI_BACK;
     paragraph(gui_str("%s was changed on two devices. Which one do you want to keep?", v->what), SMALL + 2, t->paper, 8, 16);
     for (int sd = 0; sd < 2; sd++) {
       Clay_ElementId id = CLAY_IDI("Side", sd);

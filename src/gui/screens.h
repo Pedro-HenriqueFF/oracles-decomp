@@ -15,7 +15,8 @@ typedef struct {
   SDL_FRect game;               // the game picture on the screen, render pixels
   SDL_FRect safe;               // the part of the screen clear of notches and system bars
   float w, h;                   // the whole screen
-  bool hints;                   // keyboard hints ("Enter select  Esc back"); off on touch screens
+  bool hints;                   // keyboard hints ("Enter select   Esc back"); off on touch screens
+  const char *ok_key, *back_key; // what the hints call accept and back ("Enter"/"Esc", "A"/"B", "Cross"/"Circle"); NULL = keyboard names
 } GuiFrame;
 
 #define GUI_NONE (-1)
@@ -48,7 +49,7 @@ int gui_code(CodeEntry *e, const GuiTheme *t, const GuiFrame *f);
 // A save changed on two devices: the side tapped (0 here, 1 the other), or GUI_BACK (decide later).
 int gui_conflict(ConflictView *v, const GuiTheme *t, const GuiFrame *f);
 // The message near the bottom of the game picture; true when its Undo was tapped.
-bool gui_toast(const char *msg, bool undo, const GuiTheme *t, const GuiFrame *f);
+bool gui_toast(const char *msg, const char *action, const GuiTheme *t, const GuiFrame *f);
 // Something the player has to wait for (a sync), over everything: a dimmed screen, the message,
 // and three squares lit in turn by ticks (milliseconds). Taps and hover don't reach what is under it.
 void gui_wait(const char *msg, uint64_t ticks, const GuiTheme *t, const GuiFrame *f);

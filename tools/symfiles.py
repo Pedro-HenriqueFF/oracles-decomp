@@ -33,16 +33,24 @@ def ram_map(sym, generated='src/hooks/generated.txt'):
     return ram
 
 
+def is_eu(sym):
+    """A European ROM's symbol file (tools/eu_sym.py writes ref/eu/<game>_eu.sym)."""
+    import os
+    return os.path.basename(sym).endswith('_eu.sym')
+
+
 def extra_sym_for(sym):
-    """The hand-written extra labels that go with a symbol file (vectors, code run from RAM)."""
-    return 'src/hooks/extra_seasons.sym' if 'seasons' in sym else 'src/hooks/extra.sym'
+    """The hand-written extra labels that go with a symbol file (vectors, code run from RAM); the
+    European files are the same labels carried over by tools/eu_sym.py."""
+    return ('src/hooks/extra_seasons' if 'seasons' in sym else 'src/hooks/extra') + ('_eu' if is_eu(sym) else '') + '.sym'
 
 
 def extra_labels(sym):
     """[(bank, addr, name, source (bank, addr) or None, extern)] from the extra file."""
     import os
     out = []
-    paths = [extra_sym_for(sym)] + (['src/hooks/alias_seasons.sym'] if 'seasons' in sym else [])
+    paths = [extra_sym_for(sym)] + ([f'src/hooks/alias_seasons{"_eu" if is_eu(sym) else ""}.sym'] if 'seasons' in sym else [])
+    if is_eu(sym): paths.append(f'src/hooks/labels{"_seasons" if "seasons" in sym else ""}_eu.sym')     # tools/eu_gen.py
     for path in paths:
         if not os.path.exists(path): continue
         for line in open(path):
@@ -132,6 +140,43 @@ def pair_instances(ages_rom, ages_sym, seasons_rom, seasons_sym):
     for key, cands in votes.items():
         if len(cands) == 1 and key not in pairs: pairs[key] = next(iter(cands))
     return pairs
+
+
+def eu_sym_for(sym):
+    """ref/eu/<game>_eu.sym for a USA symbol file, or None when it has not been generated."""
+    import os
+    path = os.path.join('ref', 'eu', ('seasons' if 'seasons' in os.path.basename(sym) else 'ages') + '_eu.sym')
+    return path if os.path.exists(path) else None
+
+
+def eu_address_map(us_sym, eu_sym):
+    """USA (bank, addr) -> EU (bank, addr) for every ROM label tools/eu_sym.py placed (extra labels
+    included). A label with copies in several banks is paired by bank: code banks keep their
+    number in the EU ROMs; failing that, by order."""
+    us, eu = rom_labels(us_sym), rom_labels(eu_sym)
+    out = {}
+    for name, uinst in us.items():
+        einst = eu.get(name)
+        if not einst: continue
+        if len(uinst) == 1 and len(einst) == 1:
+            out.setdefault(uinst[0], einst[0]); continue
+        for u in uinst:
+            same = [e for e in einst if e[0] == u[0] or (u[1] < 0x4000 and e[1] < 0x4000)]
+            if len(same) == 1: out.setdefault(u, same[0])
+            elif len(uinst) == len(einst): out.setdefault(u, einst[uinst.index(u)])
+    return out
+
+
+def sym_macros(root='src/game'):
+    """NAME -> expansion for the `#define NAME ...SYM(label)...` lines of the game headers
+    (ROM_b07_fileManagementFunction is SYM(fileManagementFunction)): C that uses NAME uses label."""
+    import glob, os
+    out = {}
+    for path in glob.glob(os.path.join(root, '**', '*.h'), recursive=True):
+        for line in open(path, errors='replace'):
+            m = re.match(r'#define (\w+) (.*\bSYM\(\w+\).*?)\s*(?://.*)?$', line)
+            if m: out[m.group(1)] = m.group(2)
+    return out
 
 
 UNNAMED = re.compile(r'^(_label_[0-9a-f]{2}_\d+|label_[0-9a-f]{2}_\d+)$')

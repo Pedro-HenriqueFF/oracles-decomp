@@ -36,6 +36,7 @@ static void ambi_add_double_index(GB *gb, uint16_t return_address) {
 }
 
 void interactionCode4d_hook(GB *gb);
+void interactionCode4d__afterCall6122_hook(GB *gb);
 void ambi_state1_hook(GB *gb);
 void ambi_updateAnimationAndRunScript_hook(GB *gb);
 void ambi_runSubid01_hook(GB *gb);
@@ -75,7 +76,7 @@ subid1:
   CALL_C(b_+62, checkIsLinkedGame_hook, SYM(checkIsLinkedGame), b_+65);
   if (!(F & FZ)) { CYCT(b_+65, b_+66); ret_effect(gb); return; }
   CYC(b_+65, b_+66);
-  CYC(b_+66, b_+69); SET_HL((SYM(subrosian_loadScript) + 6));
+  CYC(b_+66, b_+69); SET_HL(RV((SYM(subrosian_loadScript) + 6), 0x6405));
   CYC(b_+69, b_+72); interactionSetScript_hook(gb);
   return;
 
@@ -85,7 +86,7 @@ subid3:
   if (!(F & FZ)) { CYCT(b_+77, b_+80); interactionDelete_hook(gb); return; }
   CYC(b_+77, b_+80);
 subid4:
-  CYC(b_+80, b_+83); SET_HL((SYM(dog_setTargetPositionIndex__map3) + 4));
+  CYC(b_+80, b_+83); SET_HL(RV((SYM(dog_setTargetPositionIndex__map3) + 4), 0x68e8));
   CYC(b_+83, b_+85); E = 0x08;
   CALL_C(b_+85, interBankCall_hook, 0x008a, b_+88);
   CYC(b_+88, b_+91); ambi_loadScript_hook(gb);
@@ -100,7 +101,7 @@ subid2:
   return;
 
 subid5:
-  CYC(b_+100, b_+103); SET_HL((SYM(dog_setTargetPositionIndex__map3) + 4));
+  CYC(b_+100, b_+103); SET_HL(RV((SYM(dog_setTargetPositionIndex__map3) + 4), 0x68e8));
   CYC(b_+103, b_+105); E = 0x08;
   CALL_C(b_+105, interBankCall_hook, 0x008a, b_+108);
   CALL_C(b_+108, objectSetVisiblec3_hook, SYM(objectSetVisiblec3), b_+111);
@@ -143,7 +144,7 @@ spawn_ghost_veran:
   CYC(b_+168, b_+169); W8(w1Link_direction) = A;
   CYC(b_+169, b_+170); W8(w1Link_angle) = A;
   CYC(b_+170, b_+173); W8(wDisableLinkCollisionsAndMenu) = A;
-  CYC(b_+173, b_+176); W8(wTmpcfc0_genericCutscene_cfd0) = A;
+  CYC(b_+173, b_+176); W8(wTmpcfc0_genericCutscene_state) = A;
   CYC(b_+176, b_+177); A = alu_dec8(gb, A);
   CYC(b_+177, b_+180); W8(wActiveMusic) = A;
   CYC(b_+180, b_+183); SET_HL(wcc93);
@@ -167,6 +168,17 @@ subida:
   CYC(b_+212, b_+215); ambi_loadScript_hook(gb);
 }
 
+// the tail of state0 after @initSubid returns, shared by both of its entries
+static void ambi_state0_mark_solid(GB *gb) {
+  BASE(interactionCode4d);
+  CYC(b_+20, b_+22); E = 0x40;
+  CYC(b_+22, b_+23); A = mem_rd(gb, DE);
+  CYC(b_+23, b_+24); alu_or(gb, A);
+  if (!(F & FZ)) { CYCT(b_+24, b_+27); objectMarkSolidPosition_hook(gb); return; }
+  CYC(b_+24, b_+27);
+  CYC(b_+27, b_+28); ret_effect(gb);
+}
+
 void interactionCode4d_hook(GB *gb) {
   BASE(interactionCode4d);
   uint16_t sp0_ = gb->sp; (void)sp0_;
@@ -185,12 +197,14 @@ state0:
   CALL_C(b_+11, interactionInitGraphics_hook, SYM(interactionInitGraphics), b_+14);
   CALL_C(b_+14, objectSetVisiblec2_hook, SYM(objectSetVisiblec2), b_+17);
   CYC(b_+17, b_+20); push_effect(gb, b_+20); ambi_init_subid(gb, sp0_);
-  CYC(b_+20, b_+22); E = 0x40;
-  CYC(b_+22, b_+23); A = mem_rd(gb, DE);
-  CYC(b_+23, b_+24); alu_or(gb, A);
-  if (!(F & FZ)) { CYCT(b_+24, b_+27); objectMarkSolidPosition_hook(gb); return; }
-  CYC(b_+24, b_+27);
-  CYC(b_+27, b_+28); ret_effect(gb);
+  ambi_state0_mark_solid(gb);
+}
+
+// 09:6122, the `ld e,Interaction.enabled` after `call @initSubid`. The engine can resume a thread
+// here with the return address still on its stack rather than inside this routine's C, so the
+// native build needs a hook at the address; without one, Ambi's room (Ages 1:16) stopped the engine.
+void interactionCode4d__afterCall6122_hook(GB *gb) {
+  ambi_state0_mark_solid(gb);
 }
 
 void ambi_state1_hook(GB *gb) {
@@ -253,7 +267,7 @@ substate0:
   CYC(b_+37, b_+39); alu_cp(gb, 0x0e);
   if (!(F & FZ)) { CYCT(b_+39, b_+41); ambi_updateAnimationAndRunScript_hook(gb); return; }
   CYC(b_+39, b_+41);
-  CYC(b_+41, b_+44); SET_HL((SYM(interactionCode64__state0) + 5));
+  CYC(b_+41, b_+44); SET_HL(RV((SYM(interactionCode64__state0) + 5), 0x73df));
   CYC(b_+44, b_+46); E = 0x08;
   CALL_C(b_+46, interBankCall_hook, 0x008a, b_+49);
   CYC(b_+49, b_+52); interactionIncSubstate_hook(gb);
@@ -299,7 +313,7 @@ substate0:
 substate1:
   CALL_C(b_+17, interactionAnimateBasedOnSpeed_hook, SYM(interactionAnimateBasedOnSpeed), b_+20);
   CALL_C(b_+20, objectApplySpeed_hook, SYM(objectApplySpeed), b_+23);
-  CYC(b_+23, b_+26); A = W8(wTmpcfc0_genericCutscene_cfd0);
+  CYC(b_+23, b_+26); A = W8(wTmpcfc0_genericCutscene_state);
   CYC(b_+26, b_+28); alu_cp(gb, 0x06);
   if (!(F & FZ)) { CYCT(b_+28, b_+29); ret_effect(gb); return; }
   CYC(b_+28, b_+29);
@@ -324,7 +338,7 @@ void ambi_runSubid03_hook(GB *gb) {
   } while (0);
 
 substate0:
-  CYC(b_+14, b_+17); A = W8(wTmpcfc0_genericCutscene_cfd0);
+  CYC(b_+14, b_+17); A = W8(wTmpcfc0_genericCutscene_state);
   CYC(b_+17, b_+19); alu_cp(gb, 1);
   if (!(F & FZ)) { CYCT(b_+19, b_+21); goto animate; }
   CYC(b_+19, b_+21);
@@ -377,7 +391,7 @@ substate3:
   if (!(F & FZ)) { CYCT(b_+89, b_+90); ret_effect(gb); return; }
   CYC(b_+89, b_+90);
   CYC(b_+90, b_+92); A = 2;
-  CYC(b_+92, b_+95); W8(wTmpcfc0_genericCutscene_cfd0) = A;
+  CYC(b_+92, b_+95); W8(wTmpcfc0_genericCutscene_state) = A;
   CYC(b_+95, b_+98); TAIL(interactionIncSubstate);
 }
 
@@ -412,7 +426,7 @@ substate1:
   if (F & FZ) { CYCT(b_+33, b_+34); ret_effect(gb); return; }
   CYC(b_+33, b_+34);
   CYC(b_+34, b_+36); A = 3;
-  CYC(b_+36, b_+39); W8(wTmpcfc0_genericCutscene_cfd0) = A;
+  CYC(b_+36, b_+39); W8(wTmpcfc0_genericCutscene_state) = A;
   CYC(b_+39, b_+42); TAIL(interactionIncSubstate);
 }
 
@@ -422,7 +436,7 @@ void ambi_runSubid05_hook(GB *gb) {
   CALL_C(b_+0, interactionRunScript_hook, SYM(interactionRunScript), b_+3);
   if (F & FC) { CYCT(b_+3, b_+6); interactionDelete_hook(gb); return; }
   CYC(b_+3, b_+6);
-  CYC(b_+6, b_+9); A = W8(wTmpcfc0_genericCutscene_cfd0);
+  CYC(b_+6, b_+9); A = W8(wTmpcfc0_genericCutscene_state);
   CYC(b_+9, b_+11); alu_bit(gb, 1, A);
   if (F & FZ) { CYCT(b_+11, b_+14); interactionAnimate_hook(gb); return; }
   CYC(b_+11, b_+14);

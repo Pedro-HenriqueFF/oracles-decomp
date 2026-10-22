@@ -1,8 +1,10 @@
 // The shipped app: native engine, no interpreter, no boot ROM, no ROM code. On first launch it
 // takes the user's ROM (argument, or the launcher's ADD ROM dialog; loose or in a zip or gz, see
-// platform/archive.c), checks its SHA1 against the two known games, builds the cycle table from the
-// original bytes, zeroes the code bytes and writes the result to the per-platform cache; later
-// launches load the cache and never see the ROM again. Saves are the game's own SRAM image in that
+// platform/archive.c), checks its SHA1 against the known ROMs (each game's USA and European
+// release), builds the cycle table from the original bytes, zeroes the code bytes and writes the
+// result to the per-platform cache; later launches load the cache and never see the ROM again.
+// Each ROM keeps its own folder there (ages, ages-eu, seasons, seasons-eu), saves and states
+// included, and the one added last is the one its game's tab starts (active.txt). Saves are the game's own SRAM image in that
 // cache; Cmd+S / Cmd+R save and load one state slot there.
 //
 // usage: oracles-native [ROM] [--game ages|seasons [--file 1-3]] [--cache DIR] [--frames N]
@@ -40,6 +42,9 @@
 #define ON_PHONE false
 #endif
 #include "wide/wide.h"
+#include "wide/hud.h"
+#include "ui/labels.h"
+#include "wide/npcs.h"
 #include "mods/mods.h"
 #include "mods/picture.h"
 #include <stdio.h>
@@ -50,10 +55,17 @@
 #define AUDIO_TARGET_BYTES (APU_SAMPLE_RATE / 10 * 4)
 #define ASSETS_VERSION 1
 
-static const struct { const char *sha1, *game; } known[] = {
+// id: the ROM's folder in the cache. A save made on one release would not load on the other
+// (the European one keeps a language and a signature in it), so each keeps its own.
+static const struct { const char *sha1, *id; } known[] = {
   {"880374fb978b18af4aa529e2e32f7ffb4d7dd2f4", "ages"},
   {"ba1268290fb2b1b70505d2d7b5825fc8a4816a4b", "seasons"},
+  {"9f2dff3c46406839f839a8d535353dfc1e3e8670", "ages-eu"},        // Europe (En,Fr,De,Es,It)
+  {"360b9408e569ba826212eac1ebea1b09573cb48c", "seasons-eu"},     // Europe (En,Fr,De,Es,It)
 };
+
+// A ROM folder's game: "ages-eu" is Ages.
+static bool is_ages(const char *id) { return !strncmp(id, "ages", 4); }
 
 static bool write_file(const char *path, const void *data, size_t n) {
   FILE *f = fopen(path, "wb");
@@ -67,9 +79,48 @@ static const char *game_of(const uint8_t *rom, size_t n) {
   char hex[41];
   sha1_hex(rom, n, hex);
   for (size_t i = 0; i < sizeof known / sizeof known[0]; i++)
-    if (strcmp(hex, known[i].sha1) == 0) return known[i].game;
-  fprintf(stderr, "ROM sha1 %s is not Oracle of Ages or Seasons (USA)\n", hex);
+    if (strcmp(hex, known[i].sha1) == 0) return known[i].id;
+  fprintf(stderr, "ROM sha1 %s is not Oracle of Ages or Seasons (USA or Europe)\n", hex);
   return NULL;
+}
+
+static bool cached(const char *cache, const char *game);
+
+// active.txt: per game, the ROM folder its tab starts ("ages ages-eu"), so adding the other
+// release switches to it and leaves the first one's saves where they are.
+static void active_set(const char *cache, const char *id) {
+  char path[1100], ids[2][16] = {"", ""};
+  snprintf(path, sizeof path, "%sactive.txt", cache);
+  FILE *f = fopen(path, "r");
+  if (f) {
+    char a[16], b[16];
+    while (fscanf(f, "%15s %15s", a, b) == 2) snprintf(ids[is_ages(a) ? 0 : 1], sizeof ids[0], "%s", b);
+    fclose(f);
+  }
+  snprintf(ids[is_ages(id) ? 0 : 1], sizeof ids[0], "%s", id);
+  if (!(f = fopen(path, "w"))) return;
+  if (ids[0][0]) fprintf(f, "ages %s\n", ids[0]);
+  if (ids[1][0]) fprintf(f, "seasons %s\n", ids[1]);
+  fclose(f);
+}
+
+// The ROM folder a game's tab uses: the one active.txt names if it is installed, else whichever
+// release is installed (the USA one first), else the USA folder (shown as not installed).
+static const char *rom_id(const char *cache, int ages) {
+  static char out[2][16];
+  const char *us = ages ? "ages" : "seasons", *eu = ages ? "ages-eu" : "seasons-eu";
+  char path[1100], a[16], b[16];
+  snprintf(path, sizeof path, "%sactive.txt", cache);
+  FILE *f = fopen(path, "r");
+  char *o = out[ages ? 0 : 1];
+  o[0] = 0;
+  if (f) {
+    while (fscanf(f, "%15s %15s", a, b) == 2)
+      if (!strcmp(a, ages ? "ages" : "seasons") && (!strcmp(b, us) || !strcmp(b, eu)) && cached(cache, b)) snprintf(o, 16, "%s", b);
+    fclose(f);
+  }
+  if (!o[0]) snprintf(o, 16, "%s", cached(cache, us) || !cached(cache, eu) ? us : eu);
+  return o;
 }
 
 // The cache holds, per game, the ROM image with its code bytes zeroed, the cycle table built
@@ -103,13 +154,14 @@ static bool extract(const char *rom_path, const char *cache, char *game_out, cha
   snprintf(path, sizeof path, "%s/cyctab.bin", dir);
   ok = ok && write_file(path, tab, n);
   char manifest[512];
-  snprintf(manifest, sizeof manifest, "oracles-assets %d\ngame %s\nrom_sha1 %s\nsize %zu\ncode_bytes_zeroed %zu\n", ASSETS_VERSION, game, hex, n, zeroed);
+  snprintf(manifest, sizeof manifest, "oracles-assets %d\ngame %s\nregion %s\nrom_sha1 %s\nsize %zu\ncode_bytes_zeroed %zu\n", ASSETS_VERSION, is_ages(game) ? "ages" : "seasons", strchr(game, '-') ? "eu" : "us", hex, n, zeroed);
   snprintf(path, sizeof path, "%s/manifest.txt", dir);
   ok = ok && write_file(path, manifest, strlen(manifest));
   if (ok) fprintf(stderr, "extracted %s: %zu code bytes zeroed, cache %s\n", game, zeroed, dir);
   else { fprintf(stderr, "cannot write the cache in %s\n", dir); snprintf(err, err_size, "CANNOT SAVE CACHE"); }
   strcpy(game_out, game);
   free(rom); free(tab);
+  if (ok) active_set(cache, game);
   return ok;
 }
 
@@ -126,6 +178,22 @@ static bool cached(const char *cache, const char *game) {
 
 static Settings settings;
 
+// The device that sent the last input decides what the screen calls the buttons (touch_on covers
+// touch), and the last pad's type what Auto means.
+static bool touch_on, pad_last;
+static PadStyle pad_seen = STYLE_AUTO;
+
+static PadStyle style_of_pad(SDL_JoystickID id) {
+  switch (SDL_GetGamepadTypeForID(id)) {
+  case SDL_GAMEPAD_TYPE_PS3: case SDL_GAMEPAD_TYPE_PS4: case SDL_GAMEPAD_TYPE_PS5: return STYLE_PLAYSTATION;
+  case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO: case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT:
+  case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT: case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR: return STYLE_NINTENDO;
+  default: return STYLE_XBOX;
+  }
+}
+static InputDevice input_device(void) { return touch_on ? DEVICE_TOUCH : pad_last ? DEVICE_PAD : DEVICE_KEYBOARD; }
+static PadStyle pad_style(void) { return pad_style_resolve(settings.pad_style, pad_seen); }
+
 static uint8_t joy_of(Action a) {
   static const uint8_t bits[ACTIONS] = {JOY_UP, JOY_DOWN, JOY_LEFT, JOY_RIGHT, JOY_A, JOY_B, JOY_START, JOY_SELECT, 0, 0, 0, 0, 0};
   return a < ACTIONS ? bits[a] : 0;
@@ -140,6 +208,8 @@ static const char *key_name(int sc) {
 }
 static const char *pad_name(int button) {
   static char buf[32];
+  const char *styled = pad_style_name(pad_style(), button);
+  if (styled) return styled;
   if (button == PAD_RIGHT_TRIGGER) return "RT";
   if (button == PAD_LEFT_TRIGGER) return "LT";
   const char *s = SDL_GetGamepadStringForButton((SDL_GamepadButton)button);
@@ -192,8 +262,6 @@ static void load_sram(GB *gb, const char *path) {
 static void save_sram(GB *gb, const char *path) {
   if (gb->eram_size) write_file(path, gb->eram, gb->eram_size);
 }
-
-static const char *const game_ids[UI_GAMES] = {"ages", "seasons"};
 
 static bool poll_event(SDL_Event *ev);
 static void show_status(const char *msg);
@@ -276,7 +344,36 @@ static bool slot_load(GB *gb, const char *dir, int slot) {
   slot_path(path, sizeof path, dir, slot, "");
   if (!oracles_load_boot_state(gb, path)) return false;
   fibers_reset(gb);
+  wide_npcs_reset();
   return true;
+}
+
+// The copies of the game that walk into the rooms beside the screen (wide/npcs.h) run here, so
+// the game never waits for one.
+static SDL_Semaphore *npcs_wake;
+
+static int npcs_thread(void *arg) {
+  (void)arg;
+  SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_LOW);
+  for (;;) {
+    SDL_WaitSemaphore(npcs_wake);
+    wide_npcs_work();
+  }
+  return 0;
+}
+
+static void npcs_signal(void) {
+  if (!npcs_wake) {
+    npcs_wake = SDL_CreateSemaphore(0);
+    // the copy's kernel runs on this stack as the game's does on the main thread's
+    SDL_PropertiesID props = SDL_CreateProperties();
+    SDL_SetPointerProperty(props, SDL_PROP_THREAD_CREATE_ENTRY_FUNCTION_POINTER, (void *)npcs_thread);
+    SDL_SetStringProperty(props, SDL_PROP_THREAD_CREATE_NAME_STRING, "npcs");
+    SDL_SetNumberProperty(props, SDL_PROP_THREAD_CREATE_STACKSIZE_NUMBER, 8 << 20);
+    SDL_DetachThread(SDL_CreateThreadWithProperties(props));
+    SDL_DestroyProperties(props);
+  }
+  SDL_SignalSemaphore(npcs_wake);
 }
 
 // A state file's time and thumbnail (black when it has none).
@@ -316,6 +413,111 @@ static void settings_store(void) {
   write_file(settings_path, text, (size_t)n);
 }
 
+// Portable mode: portable.txt beside the app (beside Oracles.app on a Mac, whose bundle must stay
+// unmodified) keeps the data in oracles-data/ there instead of the user's app-data folder.
+static bool portable_dir(char *out, size_t size) {
+#ifdef __ANDROID__
+  (void)out; (void)size;
+  return false;
+#else
+  // an AppImage runs from a read-only mount; APPIMAGE is the file itself
+  const char *appimage = getenv("APPIMAGE");
+  if (appimage && strrchr(appimage, '/')) {
+    snprintf(out, size, "%.*s", (int)(strrchr(appimage, '/') - appimage + 1), appimage);
+    return true;
+  }
+  const char *base = SDL_GetBasePath();
+  if (!base) return false;
+  snprintf(out, size, "%s", base);
+  char *bundle = strstr(out, ".app/Contents/");
+  if (bundle) { *bundle = 0; char *slash = strrchr(out, '/'); if (slash) slash[1] = 0; }
+  return true;
+#endif
+}
+
+static bool portable_marker(char *out, size_t size) {
+  char dir[1024];
+  if (!portable_dir(dir, sizeof dir)) return false;
+  snprintf(out, size, "%sportable.txt", dir);
+  return true;
+}
+
+static bool portable_marked(void) {
+  char marker[1100];
+  return portable_marker(marker, sizeof marker) && file_exists(marker);
+}
+
+static SDL_EnumerationResult SDLCALL any_entry(void *found, const char *dir, const char *name) {
+  (void)dir; (void)name;
+  *(bool *)found = true;
+  return SDL_ENUM_SUCCESS;
+}
+
+static bool dir_empty(const char *dir) {
+  bool found = false;
+  SDL_EnumerateDirectory(dir, any_entry, &found);
+  return !found;
+}
+
+static bool copy_tree(const char *from, const char *to);
+
+static SDL_EnumerationResult SDLCALL copy_entry(void *to, const char *dir, const char *name) {
+  char src[1100], dst[1100];
+  SDL_PathInfo info;
+  snprintf(src, sizeof src, "%s%s", dir, name);
+  snprintf(dst, sizeof dst, "%s%s", (const char *)to, name);
+  if (!SDL_GetPathInfo(src, &info)) return SDL_ENUM_FAILURE;
+  if (info.type == SDL_PATHTYPE_DIRECTORY) {
+    strcat(src, "/");
+    strcat(dst, "/");
+    return copy_tree(src, dst) ? SDL_ENUM_CONTINUE : SDL_ENUM_FAILURE;
+  }
+  return SDL_CopyFile(src, dst) ? SDL_ENUM_CONTINUE : SDL_ENUM_FAILURE;
+}
+
+static bool copy_tree(const char *from, const char *to) {
+  return SDL_CreateDirectory(to) && SDL_EnumerateDirectory(from, copy_entry, (void *)to);
+}
+
+// The data folder for this run, with pref the user's app-data folder. On the first run after Portable
+// is switched on or off, the folder it switches to gets a copy of the other one, unless it already
+// holds something: nothing is ever overwritten, and the old folder stays as it was.
+static void data_folder(char *cache, size_t size, const char *pref) {
+  char dir[1024], portable[1100];
+  snprintf(cache, size, "%s", pref);
+  if (!portable_dir(dir, sizeof dir)) return;
+  snprintf(portable, sizeof portable, "%soracles-data/", dir);
+  bool on = portable_marked();
+  const char *from = on ? pref : portable;
+  if (on) snprintf(cache, size, "%s", portable);
+  bool copied = true;
+  if (file_exists(from) && !dir_empty(from) && (!file_exists(cache) || dir_empty(cache))) {
+    char dest[1100], part[1110], part_dir[1120];
+    snprintf(dest, sizeof dest, "%.*s", (int)strlen(cache) - 1, cache);
+    snprintf(part, sizeof part, "%s.part", dest);
+    snprintf(part_dir, sizeof part_dir, "%s/", part);
+    SDL_RemovePath(dest);
+    copied = copy_tree(from, part_dir) && SDL_RenamePath(part, dest);
+  }
+  if (!copied || !SDL_CreateDirectory(cache)) {
+    fprintf(stderr, "could not set up %s: %s\n", cache, SDL_GetError());
+    snprintf(cache, size, "%s", pref);
+    return;
+  }
+  // SDL_GetPrefPath creates the app-data folder and its organization folder; a portable run that
+  // never used them takes them away again (SDL_RemovePath leaves a folder with anything in it)
+  if (on) {
+    char p[1024];
+    snprintf(p, sizeof p, "%s", pref);
+    for (int i = 0; i < 2; i++) {
+      size_t n = strlen(p);
+      while (n && (p[n - 1] == '/' || p[n - 1] == '\\')) p[--n] = 0;
+      if (!n || !SDL_RemovePath(p)) break;
+      while (n && p[n - 1] != '/' && p[n - 1] != '\\') p[--n] = 0;
+    }
+  }
+}
+
 static void apply_window_settings(SDL_Window *win) {
 #ifdef __ANDROID__
   settings.fullscreen = true;
@@ -341,11 +543,13 @@ static float volume_gain(bool muted) { return muted ? 0.0f : settings.volume / 1
 // A message shown over the screen for two seconds (state saved, item set, ...).
 static char toast[40];
 static uint64_t toast_until;
-static bool toast_undo, undo_tapped;        // the message offers Undo; it was tapped
+static const char *toast_action;            // the message's button (Undo, Restart), or NULL
+static bool undo_tapped, restart_tapped;
 static void show_status(const char *msg) {
   snprintf(toast, sizeof toast, "%s", msg);
   toast_until = SDL_GetTicks() + 2000;
-  toast_undo = undo_tapped = false;
+  toast_action = NULL;
+  undo_tapped = false;
 }
 
 // While set, the wait shown over everything (a sync the player has to wait for); it replaces the message.
@@ -355,7 +559,18 @@ static const char *waiting;
 static void show_undoable(const char *msg) {
   show_status(msg);
   toast_until = SDL_GetTicks() + 4000;
-  toast_undo = true;
+  toast_action = "Undo";
+}
+
+// The Portable row writes or removes portable.txt; the data folder follows on the next start.
+static void portable_switched(void) {
+  char marker[1100];
+  if (!portable_marker(marker, sizeof marker)) return;
+  bool ok = settings.portable ? write_file(marker, "", 0) : SDL_RemovePath(marker);
+  if (!ok) { settings.portable = !settings.portable; show_status("Can't write beside the app"); return; }
+  show_status("Restart to change folder");
+  toast_until = SDL_GetTicks() + 8000;
+  toast_action = "Restart";
 }
 
 static void apply_game_settings(void) {
@@ -363,9 +578,6 @@ static void apply_game_settings(void) {
   features.quick_swap = settings.quick_swap;
   features.fast_menus = settings.fast_menus;
   features.four_slots = settings.four_slots;
-  // With the boxes on screen the B box must keep showing the B item, so holding X or Y should not
-  // repaint it with the item it lends to the B slot.
-  features.slot_boxes = settings.four_slots && settings.widescreen;
 }
 
 // The items on X and Y, per game: two bytes in item_buttons.
@@ -401,7 +613,7 @@ static void item_button(GB *gb, const char *dir, int slot, bool down) {
 #define TEST_TOUCH_ID 0x7e57
 #define FINGERS 10
 static TouchLayout layout;
-static bool touch_on, touch_mouse;
+static bool touch_mouse;
 static uint32_t touch_held, touch_pressed, touch_released;
 static struct { SDL_FingerID id; uint32_t held; bool down; } fingers[FINGERS];
 static UiTheme overlay_theme;            // the game's title-screen colours, behind widescreen's sides
@@ -487,6 +699,13 @@ static bool poll_event(SDL_Event *ev) {
     menu_finger = ev->tfinger.fingerID;
     menu_finger_down = true;
   }
+  if (ev->type == SDL_EVENT_KEY_DOWN && ev->key.scancode != SDL_SCANCODE_AC_BACK) pad_last = false;
+  else if (ev->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) { pad_last = true; pad_seen = style_of_pad(ev->gbutton.which); }
+  else if (ev->type == SDL_EVENT_GAMEPAD_AXIS_MOTION && (ev->gaxis.value > 16000 || ev->gaxis.value < -16000)) {
+    pad_last = true;
+    pad_seen = style_of_pad(ev->gaxis.which);
+  }
+  oracles_window_event(ev);
   touch_event(ev);
   stick_event(ev);
   if (ev->type == SDL_EVENT_DID_ENTER_FOREGROUND) sync_retry_soon();
@@ -532,11 +751,44 @@ static void shot_if_due(SDL_Renderer *ren) {
   }
 }
 
+// A picture's textures: straight to the screen, or through the filter at an integer scale first.
+typedef struct { SDL_Texture *direct, *big; int direct_w, big_scale, big_w; uint8_t *buf; } PicTextures;
+
+static void draw_pic(SDL_Renderer *ren, PicTextures *t, const uint8_t *rgb, int pic_w, int scale, bool fractional, ScreenFilter filter,
+                     const SDL_FRect *dst) {
+  if (!fractional && (filter == FILTER_SHARP || scale < 2) && !settings.gbc_colours) {
+    if (!t->direct || t->direct_w != pic_w) {
+      if (t->direct) SDL_DestroyTexture(t->direct);
+      t->direct = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, pic_w, FB_H);
+      SDL_SetTextureScaleMode(t->direct, SDL_SCALEMODE_NEAREST);
+      t->direct_w = pic_w;
+    }
+    SDL_UpdateTexture(t->direct, NULL, rgb, pic_w * 3);
+    SDL_RenderTexture(ren, t->direct, NULL, dst);
+    return;
+  }
+  if (!t->big || t->big_scale != scale || t->big_w != pic_w) {
+    if (t->big) SDL_DestroyTexture(t->big);
+    t->big = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, pic_w * scale, FB_H * scale);
+    free(t->buf);
+    t->buf = malloc((size_t)pic_w * scale * FB_H * scale * 3);
+    t->big_scale = scale;
+    t->big_w = pic_w;
+  }
+  SDL_SetTextureScaleMode(t->big, fractional ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
+  ui_filter(rgb, pic_w, settings.gbc_colours, scale < 2 ? FILTER_SHARP : filter, scale, t->buf);
+  SDL_UpdateTexture(t->big, NULL, t->buf, pic_w * scale * 3);
+  SDL_RenderTexture(ren, t->big, NULL, dst);
+}
+
+// Item X and Y beside the narrow picture, set by show_game for the frame it presents: the boxes
+// where they fit, else the narrow strips; strips_shown says whether the last frame had the room.
+static const uint8_t *box_rgb[2], *strip_rgb[2];
+static bool strips_shown;
+
 // Draws a picture pic_w (160 or WIDE_W) x 144 at the layout's place and scale, then the overlay.
 static void present_frame(SDL_Renderer *ren, const uint8_t *rgb, int pic_w) {
-  static SDL_Texture *direct, *big;
-  static int direct_w, big_scale, big_w;
-  static uint8_t *buf;
+  static PicTextures pic, strip[2];
   int w = pic_w, h = FB_H;
   SDL_GetCurrentRenderOutputSize(ren, &w, &h);
   SDL_Rect safe = {0, 0, w, h};
@@ -554,38 +806,33 @@ static void present_frame(SDL_Renderer *ren, const uint8_t *rgb, int pic_w) {
   SDL_RenderClear(ren);
   SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
   if (touch_on) SDL_RenderFillRect(ren, &dst);
-  if (!fractional && (settings.filter == FILTER_SHARP || scale < 2) && !settings.gbc_colours) {
-    if (!direct || direct_w != pic_w) {
-      if (direct) SDL_DestroyTexture(direct);
-      direct = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, pic_w, FB_H);
-      SDL_SetTextureScaleMode(direct, SDL_SCALEMODE_NEAREST);
-      direct_w = pic_w;
-    }
-    SDL_UpdateTexture(direct, NULL, rgb, pic_w * 3);
-    SDL_RenderTexture(ren, direct, NULL, &dst);
-  } else {
-    if (!big || big_scale != scale || big_w != pic_w) {
-      if (big) SDL_DestroyTexture(big);
-      big = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, pic_w * scale, FB_H * scale);
-      free(buf);
-      buf = malloc((size_t)pic_w * scale * FB_H * scale * 3);
-      big_scale = scale;
-      big_w = pic_w;
-    }
-    SDL_SetTextureScaleMode(big, fractional ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
-    ui_filter(rgb, pic_w, settings.gbc_colours, scale < 2 ? FILTER_SHARP : settings.filter, scale, buf);
-    SDL_UpdateTexture(big, NULL, buf, pic_w * scale * 3);
-    SDL_RenderTexture(ren, big, NULL, &dst);
+  draw_pic(ren, &pic, rgb, pic_w, scale, fractional, settings.filter, &dst);
+  strips_shown = false;
+  for (int k = 0; k < 2 && !strips_shown && strip_rgb[0] && pic_w == FB_W && !touch_on; k++) {
+    const uint8_t *const *src = k ? strip_rgb : box_rgb;
+    int sw_px = k ? WIDE_STRIP_W : WIDE_BOX_W;
+    float sw = dst.w * sw_px / pic_w;
+    SDL_FRect left = {dst.x - sw, dst.y, sw, dst.h}, right = {dst.x + dst.w, dst.y, sw, dst.h};
+    if (left.x < safe.x || right.x + sw > safe.x + safe.w) continue;
+    // CRT bends and darkens a picture towards its own edges, which on a strip this narrow is all of it
+    ScreenFilter f = settings.filter == FILTER_CRT ? FILTER_SHARP : settings.filter;
+    draw_pic(ren, &strip[0], src[0], sw_px, scale, fractional, f, &left);
+    draw_pic(ren, &strip[1], src[1], sw_px, scale, fractional, f, &right);
+    strips_shown = true;
   }
   if (touch_on && !overlay_blocked) gui_pad(&layout, touch_held, &gui_t);
   bool toast_on = toast[0] && SDL_GetTicks() < toast_until;
   if (ui_layer || toast_on || waiting) {
     GuiFrame f = {{(float)layout.game_px.x, (float)layout.game_px.y, (float)layout.game_px.w, (float)layout.game_px.h},
-                  {(float)safe.x, (float)safe.y, (float)safe.w, (float)safe.h}, (float)w, (float)h, !touch_on};
+                  {(float)safe.x, (float)safe.y, (float)safe.w, (float)safe.h}, (float)w, (float)h, !touch_on, NULL, NULL};
+    menu_hint_keys(input_device(), pad_style(), &f.ok_key, &f.back_key);
     if (ui_layer) ui_layer(&f);
     else gui_begin(gui_display_scale());
     if (waiting) gui_wait(waiting, SDL_GetTicks(), &gui_t, &f);
-    else if (toast_on && gui_toast(toast, toast_undo, &gui_t, &f)) undo_tapped = true;
+    else if (toast_on && gui_toast(toast, toast_action, &gui_t, &f)) {
+      if (toast_action && !strcmp(toast_action, "Restart")) { restart_tapped = true; SDL_PushEvent(&(SDL_Event){.type = SDL_EVENT_QUIT}); }
+      else undo_tapped = true;
+    }
     gui_end();
     if (gui_take_tap() && settings.haptics) haptic_tick();
   } else gui_none();
@@ -626,14 +873,51 @@ static int rd_room_group(const GBSample *sample, bool seasons) {
 static int rd_room_w(const GBSample *sample) { return sample->wram[0][0xd0a]; }
 static int rd_room_h(const GBSample *sample) { return sample->wram[0][0xd0b]; }
 
-// A game frame: in widescreen the room around the camera fills the sides (the message stays centred).
-static void present_game(SDL_Renderer *ren, SDL_Texture *tex, const GBSample *sample, const uint8_t *rgb, bool seasons, const uint8_t *rom, size_t rom_size) {
+static void hud_glyphs(uint8_t g[4]) {
+  InputDevice d = input_device();
+  PadStyle style = pad_style();
+  for (int i = 0; i < HUD_SLOTS; i++) g[i] = hud_slot_glyph(d, style, &settings.bindings, (HudSlot)i);
+}
+
+// The game's picture as shown: in widescreen the room around the camera fills the sides (the
+// message stays centred), the status bar names the buttons in use and the mods' overlay is on top.
+// rgb itself is left as the game drew it.
+static void show_game(SDL_Renderer *ren, const GBSample *sample, const uint8_t *rgb, bool seasons, const uint8_t *rom, size_t rom_size) {
+  static uint8_t pic[WIDE_W * FB_H * 3], boxes[2][WIDE_BOX_W * FB_H * 3], strips[2][WIDE_STRIP_W * FB_H * 3];
+  int w = settings.widescreen ? WIDE_W : FB_W;
+  // The X and Y items go in the space widescreen adds beside the status bar, or in the narrow
+  // picture's side bars when they are wide enough; the game has nowhere to put them.
+  WideOptions o = {seasons, settings.dim_sides, {overlay_theme.bg.r, overlay_theme.bg.g, overlay_theme.bg.b}, rom, rom_size,
+                   settings.four_slots, {features.slot_item[0], features.slot_item[1]}, wide_npcs_room, {0}};
+  hud_glyphs(o.glyph);
+  if (!settings.widescreen) {
+    memcpy(pic, rgb, FB_W * FB_H * 3);
+    hud_relabel(sample, o.glyph[HUD_B], o.glyph[HUD_A], pic);
+    if (wide_slot_strip(sample, &o, 0, true, boxes[0]) && wide_slot_strip(sample, &o, 1, true, boxes[1]) &&
+        wide_slot_strip(sample, &o, 0, false, strips[0]) && wide_slot_strip(sample, &o, 1, false, strips[1]))
+      for (int i = 0; i < 2; i++) { box_rgb[i] = boxes[i]; strip_rgb[i] = strips[i]; }
+  } else wide_render(sample, &o, pic);
+  // the overlay was drawn for the width the mods last saw, which a paused game can have changed since
+  const ModOverlay *ov = mods_overlay();
+  if (ov->width == w)
+    for (int y = 0; y < FB_H; y++)
+      for (int x = 0; x < w; x++)
+        if (overlay_cover_at(ov, x, y)) memcpy(pic + ((size_t)y * w + x) * 3, overlay_rgb_at(ov, x, y), 3);
+  present_frame(ren, pic, w);
+  box_rgb[0] = box_rgb[1] = strip_rgb[0] = strip_rgb[1] = NULL;
+  // With the boxes on screen the B box must keep showing the B item, so holding X or Y should not
+  // repaint it with the item it lends to the B slot.
+  features.slot_boxes = settings.four_slots && (settings.widescreen || strips_shown);
+}
+
+// The running game's paused picture: menus drawn over it show it as the game frame it was.
+static struct { const uint8_t *rgb; const GB *gb; bool seasons; const uint8_t *rom; size_t rom_size; } paused_game;
+
+// A game frame.
+static void present_game(SDL_Renderer *ren, const GBSample *sample, const uint8_t *rgb, bool seasons, const uint8_t *rom, size_t rom_size) {
   // Mods draw before the filters, so an overlay scales with the picture and takes the chosen
-  // filter rather than sitting on top of it looking sharp. Run once here, above the
-  // widescreen/narrow split below, rather than only after wide_render: the non-widescreen branch
-  // returns through present() before ever reaching wide_render, so a mod would never run for the
-  // (common) non-widescreen case if this were placed after it instead.
-  //
+  // filter rather than sitting on top of it looking sharp. Run here, before the widescreen/narrow
+  // split in show_game, so a mod runs in both.
   // Designated initializers, not positional: this struct already grew once since the launcher
   // first built it positionally, and a positional init here would have silently misassigned the
   // moment that happened -- see mods.h's own ModsFrame comment and tests/test_mods.c's identical
@@ -643,7 +927,7 @@ static void present_game(SDL_Renderer *ren, SDL_Texture *tex, const GBSample *sa
   // any game is running".
   int scroll_x, scroll_y, origin_x = 0, origin_y = 0;
   mods_picture_scroll(sample, &scroll_x, &scroll_y);
-  bool origin = wide_room_origin(sample, seasons, &origin_x, &origin_y);
+  bool origin = wide_play_origin(sample, seasons, &origin_x, &origin_y);
   ModsFrame mf = {
     .wram = sample->wram[0],
     .wram3 = sample->wram[3],
@@ -667,32 +951,17 @@ static void present_game(SDL_Renderer *ren, SDL_Texture *tex, const GBSample *sa
     .font = &mod_font,
   };
   mods_frame(&mf);
-  const ModOverlay *ov = mods_overlay();
-
-  if (!settings.widescreen) {
-    uint8_t *pic = (uint8_t *)rgb;
-    for (int y = 0; y < FB_H; y++)
-      for (int x = 0; x < ov->width; x++)
-        if (overlay_cover_at(ov, x, y)) memcpy(pic + ((size_t)y * ov->width + x) * 3, overlay_rgb_at(ov, x, y), 3);
-    present(ren, tex, rgb);
-    return;
-  }
-  static uint8_t wide[WIDE_W * FB_H * 3];
-  // The X and Y items go in the space widescreen adds beside the status bar; the game has nowhere to
-  // put them, so without the wider picture there is no room to show them in.
-  WideOptions o = {seasons, settings.dim_sides, {overlay_theme.bg.r, overlay_theme.bg.g, overlay_theme.bg.b}, rom, rom_size,
-                   settings.four_slots, {features.slot_item[0], features.slot_item[1]}};
-  wide_render(sample, &o, wide);
-  for (int y = 0; y < FB_H; y++)
-    for (int x = 0; x < ov->width; x++)
-      if (overlay_cover_at(ov, x, y)) memcpy(wide + ((size_t)y * ov->width + x) * 3, overlay_rgb_at(ov, x, y), 3);
-  present_frame(ren, wide, WIDE_W);
+  show_game(ren, sample, rgb, seasons, rom, rom_size);
 }
 
 // A 160-wide picture (a menu, or the game where the sides are not drawn): with the current message,
 // and in widescreen centred on the theme's border colour.
 static void present(SDL_Renderer *ren, SDL_Texture *tex, const uint8_t *rgb) {
   (void)tex;
+  if (paused_game.gb && paused_game.gb->sample && rgb == paused_game.rgb) {
+    show_game(ren, paused_game.gb->sample, rgb, paused_game.seasons, paused_game.rom, paused_game.rom_size);
+    return;
+  }
   if (!settings.widescreen) { present_frame(ren, rgb, FB_W); return; }
   static uint8_t wide[WIDE_W * FB_H * 3];
   const int side = (WIDE_W - FB_W) / 2;
@@ -714,20 +983,21 @@ static void launcher_load(Launcher *l, const char *cache) {
   for (int g = 0; g < UI_GAMES; g++) {
     LauncherGame *lg = &l->games[g];
     ui_theme_default(&lg->theme, g == UI_GAME_AGES);
-    if (!cached(cache, game_ids[g])) continue;
+    const char *id = rom_id(cache, g == UI_GAME_AGES);
+    if (!cached(cache, id)) continue;
     lg->installed = true;
     char path[1300];
     size_t n;
-    snprintf(path, sizeof path, "%s%s/sram.sav", cache, game_ids[g]);
+    snprintf(path, sizeof path, "%s%s/sram.sav", cache, id);
     uint8_t *sram = oracles_read_file(path, &n);
     ui_read_files(sram, sram ? n : 0, g == UI_GAME_AGES, lg->files);
     free(sram);
     char dir[1100];
-    snprintf(dir, sizeof dir, "%s%s", cache, game_ids[g]);
+    snprintf(dir, sizeof dir, "%s%s", cache, id);
     migrate_state(dir);
     slot_path(path, sizeof path, dir, SLOT_AUTO, "");
     lg->has_resume = file_exists(path);
-    snprintf(path, sizeof path, "%s%s/rom.bin", cache, game_ids[g]);
+    snprintf(path, sizeof path, "%s%s/rom.bin", cache, id);
     uint8_t *rom = oracles_read_file(path, &n);
     ui_theme_load(&lg->theme, rom, rom ? n : 0, g == UI_GAME_AGES);
     free(rom);
@@ -884,7 +1154,7 @@ static int pick_slot_page(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, 
     slots_ui.tap = GUI_NONE;
     present(ren, tex, game_rgb ? game_rgb : black);
     push_button(slots_ui.tap == GUI_BACK ? UI_BACK : slots_ui.tap >= 0 ? UI_ACCEPT : GUI_NONE);
-    SDL_Delay(16);
+    oracles_frame_wait();
   }
 }
 
@@ -931,7 +1201,7 @@ static bool run_controls_page(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *t
     else if (controls_ui.tap == GUI_BACK) push_button(UI_BACK);
     else if (controls_ui.tap >= 0) push_button(UI_ACCEPT);
     else if (controls_ui.page >= 0 && controls_ui.page != m.pad_page) push_button(UI_RIGHT);
-    SDL_Delay(16);
+    oracles_frame_wait();
   }
 }
 
@@ -966,8 +1236,9 @@ static bool run_settings_page(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *t
       UiButton b;
       if (!menu_button(&ev, &b)) continue;
       SettingsRow row;
-      bool was_full = settings.fullscreen, was_wide = settings.widescreen;
+      bool was_full = settings.fullscreen, was_wide = settings.widescreen, was_portable = settings.portable;
       MenuAction a = settings_press(&m, &settings, b, &row);
+      if (settings.portable != was_portable) portable_switched();
       if (a == MENU_BACK) { settings_store(); return true; }
       if (a == MENU_PICK && row == SET_CONTROLS && !run_controls(win, ren, tex, game_rgb)) return false;
       if (a == MENU_PICK && row == SET_SYNC && !run_sync(win, ren, tex, game_rgb)) return false;
@@ -982,7 +1253,7 @@ static bool run_settings_page(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *t
     present(ren, tex, game_rgb);
     if (settings_ui.back) push_button(UI_BACK);
     else push_settings_tap(&settings_ui.tap);
-    SDL_Delay(16);
+    oracles_frame_wait();
   }
 }
 
@@ -1013,6 +1284,7 @@ static void settings_reload(SDL_Window *win) {
   char *z = text ? realloc(text, n + 1) : NULL;
   if (z) { z[n] = 0; settings_parse(&settings, z); free(z); } else free(text);
   sync_label_update();
+  settings.portable = portable_marked();
   apply_window_settings(win);
   apply_game_settings();
 }
@@ -1030,7 +1302,7 @@ static void wait_tick(SDL_Renderer *ren, SDL_Texture *tex, const uint8_t *rgb, b
   while (poll_event(&ev))
     if (ev.type == SDL_EVENT_QUIT) *quit = true;
   present(ren, tex, rgb);
-  SDL_Delay(16);
+  oracles_frame_wait();
 }
 
 // Waits over the open page until the sync thread has finished one sync of `game` (HTTP gives up
@@ -1052,7 +1324,7 @@ static bool sync_blocking(SDL_Renderer *ren, SDL_Texture *tex, const uint8_t *rg
 static void side_fill(ConflictSide *side, const char *label, const char *game, const char *name, const uint8_t *data, size_t n, const uint8_t *thumb, size_t tn) {
   snprintf(side->label, sizeof side->label, "%s", label);
   if (!data) { side->missing = true; return; }
-  if (!strcmp(name, "sram.sav")) { side->has_files = true; ui_read_files(data, n, !strcmp(game, "ages"), side->files); }
+  if (!strcmp(name, "sram.sav")) { side->has_files = true; ui_read_files(data, n, is_ages(game), side->files); }
   if (thumb && tn == sizeof side->thumb) { side->has_thumb = true; memcpy(side->thumb, thumb, tn); }
 }
 
@@ -1076,8 +1348,8 @@ static bool run_conflicts_page(SDL_Renderer *ren, SDL_Texture *tex, const SyncRe
     uint8_t *theirs_thumb = state ? sync_fetch(&sync_cfg, ch->game, thumb_name, &rtn) : NULL;
     memset(&v, 0, sizeof v);
     const char *what = !strcmp(ch->name, "sram.sav") ? "save files" : !strcmp(ch->name, "state_auto") ? "resume" : NULL;
-    if (what) snprintf(v.what, sizeof v.what, "%s %s", !strcmp(ch->game, "ages") ? "Ages" : "Seasons", what);
-    else snprintf(v.what, sizeof v.what, "%s slot %c", !strcmp(ch->game, "ages") ? "Ages" : "Seasons", ch->name[6]);
+    if (what) snprintf(v.what, sizeof v.what, "%s %s", is_ages(ch->game) ? "Ages" : "Seasons", what);
+    else snprintf(v.what, sizeof v.what, "%s slot %c", is_ages(ch->game) ? "Ages" : "Seasons", ch->name[6]);
     side_fill(&v.side[0], "This device", ch->game, ch->name, mine, n, mine_thumb, tn);
     v.side[0].time = (int64_t)ch->local_mtime * SDL_NS_PER_SECOND;
     side_fill(&v.side[1], ch->remote.device[0] ? ch->remote.device : "Other device", ch->game, ch->name, theirs, rn, theirs_thumb, rtn);
@@ -1104,7 +1376,7 @@ static bool run_conflicts_page(SDL_Renderer *ren, SDL_Texture *tex, const SyncRe
       conflict_ui.tap = GUI_NONE;
       present(ren, tex, page_black);
       push_button(conflict_ui.tap == GUI_BACK ? UI_BACK : conflict_ui.tap >= 0 ? UI_ACCEPT : GUI_NONE);
-      SDL_Delay(16);
+      oracles_frame_wait();
     }
   }
   return true;
@@ -1151,7 +1423,7 @@ static bool run_sync_page(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, 
   if (!game_rgb) game_rgb = page_black;
   char code[20] = "";
   // what SYNC NOW covers: every game, or during play every game but the running one
-  const char *scope = !playing ? SYNC_ALL_GAMES : !strcmp(playing, "ages") ? "seasons" : "ages";
+  const char *scope = !playing ? SYNC_ALL_GAMES : rom_id(app_cache, !is_ages(playing));
 #define REOPEN() do { code[0] = 0; if (sync_cfg.code[0]) sync_format_code(sync_cfg.code, code); \
     syncmenu_open(&m, sync_cfg.code[0] != 0, code, sync_status_line); } while (0)
   REOPEN();
@@ -1201,7 +1473,7 @@ static bool run_sync_page(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, 
           sync_ui.tap = GUI_NONE;
           present(ren, tex, game_rgb);
           push_button(sync_ui.tap == GUI_BACK ? UI_BACK : sync_ui.tap == GUI_CONNECT ? UI_ACCEPT : GUI_NONE);
-          SDL_Delay(16);
+          oracles_frame_wait();
         }
         SDL_StopTextInput(win);
         SDL_DestroyProperties(props);
@@ -1222,7 +1494,7 @@ static bool run_sync_page(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, 
     sync_ui.tap = GUI_NONE;
     present(ren, tex, game_rgb);
     push_button(sync_ui.tap == GUI_BACK ? UI_BACK : sync_ui.tap >= 0 ? UI_ACCEPT : GUI_NONE);
-    SDL_Delay(16);
+    oracles_frame_wait();
   }
 #undef REOPEN
 }
@@ -1239,7 +1511,7 @@ static void home_scan(Home *h, const char *cache) {
   launcher_load(&h->l, cache);
   for (int g = 0; g < UI_GAMES; g++) {
     char dir[1100];
-    snprintf(dir, sizeof dir, "%s%s", cache, game_ids[g]);
+    snprintf(dir, sizeof dir, "%s%s", cache, rom_id(cache, g == UI_GAME_AGES));
     for (int i = 0; i < HOME_SLOTS; i++) slot_read(&h->slots[g][i], dir, i);
     slot_read(&h->resume[g], dir, SLOT_AUTO);
   }
@@ -1283,8 +1555,9 @@ static bool run_home(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, const
       if (r.action == LAUNCH_QUIT) return false;
       if (r.action == LAUNCH_SETTINGS) {
         SettingsRow row;
-        bool was_full = settings.fullscreen, was_wide = settings.widescreen;
+        bool was_full = settings.fullscreen, was_wide = settings.widescreen, was_portable = settings.portable;
         MenuAction sa = settings_press(&settings_menu, &settings, r.button, &row);
+        if (settings.portable != was_portable) portable_switched();
         if (sa == MENU_PICK && row == SET_CONTROLS && !run_controls(win, ren, tex, NULL)) return false;
         if (sa == MENU_PICK && row == SET_SYNC) {
           if (!run_sync(win, ren, tex, NULL)) return false;
@@ -1297,7 +1570,7 @@ static bool run_home(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, const
       }
       if (r.action == LAUNCH_ADD_ROM) {
         char game[16];
-        if (pick_rom(game, cache)) { UiGame g = h.l.game; home_scan(&h, cache); home_init(&h, g); }
+        if (pick_rom(game, cache)) { home_scan(&h, cache); home_init(&h, is_ages(game) ? UI_GAME_AGES : UI_GAME_SEASONS); }
       }
       if (r.action == LAUNCH_PLAY && r.file == LAUNCH_SLOTS) {
         if (r.slot < 0) continue;
@@ -1305,11 +1578,11 @@ static bool run_home(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, const
       }
       if (r.action == LAUNCH_PLAY && sync_cfg.code[0]) {
         SyncResult pre;
-        if (sync_blocking(ren, tex, rgb, game_ids[r.game], &pre) && !sync_finished(win, ren, tex, &pre)) return false;
+        if (sync_blocking(ren, tex, rgb, rom_id(cache, r.game == UI_GAME_AGES), &pre) && !sync_finished(win, ren, tex, &pre)) return false;
         home_scan(&h, cache);
       }
       if (r.action == LAUNCH_PLAY) {
-        strcpy(game_out, game_ids[r.game]);
+        strcpy(game_out, rom_id(cache, r.game == UI_GAME_AGES));
         *file_out = r.file;
         *file_used = r.file >= 0 && h.l.games[r.game].files[r.file].valid;
         return true;
@@ -1322,7 +1595,7 @@ static bool run_home(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, const
     present(ren, tex, rgb);
     if (home_ui.button >= 0) push_button(home_ui.button);
     else push_settings_tap(&home_ui.tap);
-    SDL_Delay(16);
+    oracles_frame_wait();
   }
 }
 
@@ -1335,8 +1608,11 @@ static bool run_launcher(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, c
 
 // Boots straight into a save file: presses Start until the file select screen is up, moves the
 // cursor to the file, then A (the file) and A (the text-speed prompt). Driven by the game's own
-// file-select state, so the same inputs a player would give; any key cancels it.
-typedef enum { BOOT_OFF, BOOT_TO_FILE_SELECT, BOOT_MOVE, BOOT_SELECT, BOOT_TEXT_SPEED } BootPhase;
+// file-select state, so the same inputs a player would give; any key cancels it. The European
+// releases open their language screen (file-select mode 8) before the file menu the first time
+// they start: that choice is the player's, so the driver waits there at normal speed, the player's
+// keys going to the game, and carries on once the file menu is up.
+typedef enum { BOOT_OFF, BOOT_TO_FILE_SELECT, BOOT_MOVE, BOOT_SELECT, BOOT_TEXT_SPEED, BOOT_LANGUAGE } BootPhase;
 typedef struct { BootPhase phase; int file; bool open_file; uint64_t since; } BootDriver;
 
 // wThreadStateBuffer+6/+7 ($c2e6/$c2e7) in both games: the intro stage and the title screen's state
@@ -1345,6 +1621,7 @@ typedef struct { BootPhase phase; int file; bool open_file; uint64_t since; } Bo
 #define FS_MODE(gb) ((gb)->wram[0][wFileSelect_mode & 0xfff])
 #define FS_MODE2(gb) ((gb)->wram[0][wFileSelect_mode2 & 0xfff])
 #define FS_CURSOR(gb) ((gb)->wram[0][wFileSelect_cursorPos & 0xfff])
+#define FS_MODE_LANGUAGE 8
 
 static uint8_t boot_input(GB *gb, BootDriver *d, uint64_t frame) {
   bool pulse = (frame / 6) % 2 == 0;
@@ -1358,6 +1635,7 @@ static uint8_t boot_input(GB *gb, BootDriver *d, uint64_t frame) {
     if (gb->wram[0][INTRO_STAGE] == 3 && gb->wram[0][INTRO_VAR] == 3) { d->phase = BOOT_MOVE; return 0; }
     return pulse ? JOY_START : 0;
   case BOOT_MOVE:
+    if (FS_MODE(gb) == FS_MODE_LANGUAGE) { d->phase = BOOT_LANGUAGE; test_mark("language"); return 0; }
     if (!choosing) return 0;
     if (FS_CURSOR(gb) == d->file) { d->phase = d->open_file ? BOOT_SELECT : BOOT_OFF; return 0; }
     return pulse ? JOY_DOWN : 0;
@@ -1368,6 +1646,8 @@ static uint8_t boot_input(GB *gb, BootDriver *d, uint64_t frame) {
   case BOOT_TEXT_SPEED:
     if (FS_MODE2(gb) != 2) { d->phase = BOOT_OFF; return 0; }
     return pulse ? JOY_A : 0;
+  case BOOT_LANGUAGE:                     // the main loop runs these frames with the player's keys
+    return 0;
   }
   return 0;
 }
@@ -1468,7 +1748,7 @@ static GameEnd run_game(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, co
   snprintf(path, sizeof path, "%s/cyctab.bin", dir);
   uint8_t *tab = oracles_read_file(path, &tab_size);
   if (!rom || !tab || tab_size != rom_size) { fprintf(stderr, "cache in %s is incomplete; run again with the ROM path\n", dir); return GAME_FAILED; }
-  bool ages = strcmp(gs->game, "ages") == 0;
+  bool ages = is_ages(gs->game);
   UiTheme theme;
   ui_theme_load(&theme, rom, rom_size, ages);
   overlay_style(&theme);
@@ -1481,6 +1761,7 @@ static GameEnd run_game(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, co
   gb->code_bits = assets_code_bits(rom, rom_size);
 #endif
   gb_reset(gb);
+  wide_npcs_reset();
   char sav[1300];
   snprintf(sav, sizeof sav, "%s/sram.sav", dir);
   load_sram(gb, sav);
@@ -1529,6 +1810,11 @@ static GameEnd run_game(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, co
   }
   framebuffer_to_rgb(gb->sample ? gb->sample->framebuffer : gb->framebuffer, rgb);
   session = (Session){gb, dir, sav, paused_rgb, &mode, &parked, false, &frames, gs->game};
+  paused_game.rgb = paused_rgb;
+  paused_game.gb = gb;
+  paused_game.seasons = !ages;
+  paused_game.rom = rom;
+  paused_game.rom_size = rom_size;
   playing = gs->game;
 
   for (bool running = true; running && !gb->hung;) {
@@ -1539,7 +1825,7 @@ static GameEnd run_game(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, co
       else if (sync_failures() == 1) show_status("Sync failed");
     }
     // the running game's files wait for the game to end; the rest go as soon as the server answers
-    if (sync_cfg.code[0] && sync_should_retry()) sync_start(&sync_cfg, app_cache, strcmp(gs->game, "ages") ? "ages" : "seasons");
+    if (sync_cfg.code[0] && sync_should_retry()) sync_start(&sync_cfg, app_cache, rom_id(app_cache, !is_ages(gs->game)));
     SDL_Event ev;
     while (poll_event(&ev)) {
       if (ev.type == SDL_EVENT_QUIT) {
@@ -1610,7 +1896,7 @@ static GameEnd run_game(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, co
       case SDL_EVENT_GAMEPAD_AXIS_MOTION:
         press |= action_bit(bindings_pad_action(&settings.bindings, trigger_down));
         release |= action_bit(bindings_pad_action(&settings.bindings, trigger_up));
-        if (stick_pressed && boot.phase != BOOT_OFF) { boot.phase = BOOT_OFF; live_joy = 0; }
+        if (stick_pressed && boot.phase != BOOT_OFF && boot.phase != BOOT_LANGUAGE) { boot.phase = BOOT_OFF; live_joy = 0; }
         break;
       case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
         press |= action_bit(bindings_pad_action(&settings.bindings, ev.gbutton.button));
@@ -1620,7 +1906,7 @@ static GameEnd run_game(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, co
         break;
       }
       if (press >> ACT_PAUSE & 1) { mode = MODE_PAUSING; park_from = frames; live_joy = 0; boot.phase = BOOT_OFF; continue; }
-      if (press && boot.phase != BOOT_OFF) { boot.phase = BOOT_OFF; live_joy = 0; }
+      if (press && boot.phase != BOOT_OFF && boot.phase != BOOT_LANGUAGE) { boot.phase = BOOT_OFF; live_joy = 0; }
       for (int a = 0; a < ACTIONS; a++) {
         bool item = a == ACT_ITEM_X || a == ACT_ITEM_Y;
         if (press >> a & 1) {
@@ -1660,25 +1946,32 @@ static GameEnd run_game(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, co
       present(ren, tex, paused_rgb);
       ui_leave(was);
       if (pause_ui.tap >= 0) push_button(UI_ACCEPT);
-      SDL_Delay(16);
+      oracles_frame_wait();
       continue;
     }
 
-    if (boot.phase != BOOT_OFF) {
+    if (boot.phase == BOOT_LANGUAGE && FS_MODE(gb) != FS_MODE_LANGUAGE) {
+      boot.phase = BOOT_MOVE;             // a language was picked: on to the file
+      boot.since = frames;
+      live_joy = 0;
+    }
+    if (boot.phase != BOOT_OFF && boot.phase != BOOT_LANGUAGE) {
       // fast-forward the logos and menus, silently
-      for (int i = 0; i < 8 && boot.phase != BOOT_OFF; i++) { live_joy = boot_input(gb, &boot, frames); features_frame(gb); gb_run_frame(gb); frames++; }
+      for (int i = 0; i < 8 && boot.phase != BOOT_OFF && boot.phase != BOOT_LANGUAGE; i++) { live_joy = boot_input(gb, &boot, frames); features_frame(gb); gb_run_frame(gb); frames++; }
       if (boot.phase == BOOT_OFF) { live_joy = 0; fprintf(stderr, "boot into file %d done at frame %llu\n", boot.file + 1, (unsigned long long)frames); }
       apu_read_samples(&gb->apu, samples, APU_RING);
     } else if (fast && mode == MODE_PLAY) {
       // fast-forward: up to 4 frames per shown frame, paced by the display, without sound
       for (int i = 0; i < 4; i++) { features_frame(gb); gb_run_frame(gb); frames++; }
       apu_read_samples(&gb->apu, samples, APU_RING);
-      SDL_Delay(16);
+      oracles_frame_wait();
     } else {
       if (mode == MODE_PLAY && audio && SDL_GetAudioStreamQueued(audio) > AUDIO_TARGET_BYTES) { SDL_Delay(1); continue; }
       features_frame(gb); gb_run_frame(gb);
       frames++;
     }
+
+    if (settings.widescreen && mode == MODE_PLAY && boot.phase == BOOT_OFF && wide_npcs_update(gb)) npcs_signal();
 
     // pausing and quitting wait for a frame the state can be saved at
     if (mode == MODE_PAUSING || mode == MODE_QUITTING) {
@@ -1705,7 +1998,7 @@ static GameEnd run_game(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, co
     uint32_t n = apu_read_samples(&gb->apu, samples, APU_RING);
     if (audio && mode == MODE_PLAY) SDL_PutAudioStreamData(audio, samples, n * 4);
     framebuffer_to_rgb(gb->sample->framebuffer, rgb);
-    present_game(ren, tex, gb->sample, rgb, !ages, rom, rom_size);
+    present_game(ren, gb->sample, rgb, !ages, rom, rom_size);
     for (int i = 0; i < mod_count; i++) {
       bool now = mods_enabled(i);
       if (mod_was_enabled[i] && !now) show_status("Mod disabled");
@@ -1729,6 +2022,8 @@ static GameEnd run_game(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, co
   // entirely if the player picks one next. main()'s loop re-scans game-agnostically before the
   // launcher is shown again, and the next run_game re-inits for whichever game is actually picked.
   mods_shutdown();
+  paused_game.gb = NULL;
+  wide_npcs_stop();
   free(gb); free(rom); free(tab);
   return end;
 }
@@ -1783,7 +2078,7 @@ int main(int argc, char **argv) {
   SDL_AddEventWatch(on_app_event, NULL);
   char cache[1024];
   if (cache_arg) snprintf(cache, sizeof cache, "%s%s", cache_arg, cache_arg[strlen(cache_arg) - 1] == '/' ? "" : "/");
-  else { char *p = SDL_GetPrefPath("oracles-decomp", "oracles"); if (!p) { fprintf(stderr, "%s\n", SDL_GetError()); return 2; } snprintf(cache, sizeof cache, "%s", p); SDL_free(p); }
+  else { char *p = SDL_GetPrefPath("oracles-decomp", "oracles"); if (!p) { fprintf(stderr, "%s\n", SDL_GetError()); return 2; } data_folder(cache, sizeof cache, p); SDL_free(p); }
   SDL_CreateDirectory(cache);
 
   SDL_Window *win;
@@ -1808,14 +2103,16 @@ int main(int argc, char **argv) {
   char rom_err[40] = {0};
   if (rom_arg) { if (!extract(rom_arg, cache, game, rom_err, sizeof rom_err)) return 2; direct = true; }
   else if (game_arg) {
-    if (!cached(cache, game_arg)) { fprintf(stderr, "%s is not installed; run once with its ROM path\n", game_arg); return 2; }
-    snprintf(game, sizeof game, "%s", game_arg);
+    // --game ages|seasons starts that game's active ROM; a folder name (ages-eu) picks one
+    const char *id = strchr(game_arg, '-') ? game_arg : rom_id(cache, is_ages(game_arg));
+    if (!cached(cache, id)) { fprintf(stderr, "%s is not installed; run once with its ROM path\n", game_arg); return 2; }
+    snprintf(game, sizeof game, "%s", id);
     direct = true;
     if (file_arg >= 0 && file_arg < UI_FILES) {
       static Launcher probe;
       launcher_load(&probe, cache);
       gs.start_file = file_arg;
-      gs.open_file = probe.games[strcmp(game, "ages") == 0 ? UI_GAME_AGES : UI_GAME_SEASONS].files[file_arg].valid;
+      gs.open_file = probe.games[is_ages(game) ? UI_GAME_AGES : UI_GAME_SEASONS].files[file_arg].valid;
     }
   }
   // The spec wants settings rows a mod asked for to exist "from the launcher", before any game
@@ -1851,6 +2148,8 @@ int main(int argc, char **argv) {
   if (!sync_wait(20000)) fprintf(stderr, "sync still running at exit\n");
   mods_shutdown();
   oracles_close_window(win, window_size);
+  // Restart (after Portable changed): the quit above saved everything; the new run opens the other folder
+  if (restart_tapped && !SDL_CreateProcess((const char *const *)argv, false)) fprintf(stderr, "could not restart: %s\n", SDL_GetError());
   SDL_Quit();
   return status;
 }

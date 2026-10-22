@@ -51,7 +51,6 @@ void vire_subid0_hook(GB *gb) {
   CALL_C(b_+0, checkInteractionState_hook, SYM(checkInteractionState), b_+3);
   if (F & FZ) { CYCT(b_+3, b_+5); goto state0; }
   CYC(b_+3, b_+5);
-state1:
   CYC(b_+5, b_+7); E = 0x78;
   CYC(b_+7, b_+8); A = mem_rd(gb, DE);
   CYC(b_+8, b_+9); alu_or(gb, A);
@@ -107,7 +106,7 @@ state0:
   CYC(b_+15, b_+18);
   CALL_C(b_+18, getThisRoomFlags_hook, SYM(getThisRoomFlags), b_+21);
   CYC(b_+21, b_+23); alu_bit(gb, 6, mem_rd(gb, HL));
-  CYC(b_+23, b_+26); SET_HL((SYM(interactionCoded8__subid0Script) + 1));
+  CYC(b_+23, b_+26); SET_HL(RV((SYM(interactionCoded8__subid0Script) + 1), 0x7d5a));
   if (F & FZ) { CYCT(b_+26, b_+28); TAIL(vire_setScript); }
   CYC(b_+26, b_+28); CYC(b_+28, b_+31); A = mem_rd(gb, wActiveMusic);
   CYC(b_+31, b_+32); alu_or(gb, A); CYC(b_+32, b_+34); A = 0x2d;
@@ -175,7 +174,7 @@ state0:
   if (!(F & FZ)) { RET_TAKEN(b_+26); return; } CYC(b_+26, b_+27);
   CYC(b_+27, b_+29); E = 0x56; CYC(b_+29, b_+31); A = 0x40; CYC(b_+31, b_+32); mem_wr(gb, DE, A);
   CYC(b_+32, b_+33); E = alu_inc8(gb, E); CYC(b_+33, b_+34); A = H; CYC(b_+34, b_+35); mem_wr(gb, DE, A);
-  CYC(b_+35, b_+38); SET_HL((SYM(interactionCoded8__subid0Script) + 20));
+  CYC(b_+35, b_+38); SET_HL(RV((SYM(interactionCoded8__subid0Script) + 20), 0x7d6d));
   CALL_C(b_+38, vire_setScript_hook, SYM(vire_setScript), b_+41);
   CYC(b_+41, b_+43); L = 0x46; CYC(b_+43, b_+45); mem_wr(gb, HL, 0x08); RET(b_+45); return;
 
@@ -258,6 +257,6 @@ void vire_deleteAndReturnControl_hook(GB *gb) {
 
 void vire_returnControl_hook(GB *gb) {
   BASE(vire_returnControl);
-  uint16_t sp0_ = gb->sp;
+  uint16_t sp0_ = gb->sp; (void)sp0_;
   CYC(b_+0, b_+1); alu_xor(gb, A); CYC(b_+1, b_+4); mem_wr(gb, wDisabledObjects, A); CYC(b_+4, b_+7); mem_wr(gb, wMenuDisabled, A); RET(b_+7); return;
 }

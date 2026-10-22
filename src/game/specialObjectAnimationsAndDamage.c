@@ -402,7 +402,7 @@ no_match:
   CYC(b_+37, b_+39); goto write_damage;
 blue:
   CYC(b_+39, b_+40); A = B;
-  CYC(b_+40, b_+42); alu_sra(gb, A);
+  CYC(b_+40, b_+42); A = alu_sra(gb, A);
   CYC(b_+42, b_+44); goto write_damage;
 green:
   CYC(b_+44, b_+45); A = B;
@@ -411,8 +411,8 @@ green:
   CYC(b_+47, b_+48); alu_add(gb, A);
   CYC(b_+48, b_+49); alu_add(gb, A);
   CYC(b_+49, b_+50); alu_add(gb, B);
-  CYC(b_+50, b_+52); alu_sra(gb, A);
-  CYC(b_+52, b_+54); alu_sra(gb, A);
+  CYC(b_+50, b_+52); A = alu_sra(gb, A);
+  CYC(b_+52, b_+54); A = alu_sra(gb, A);
   CYC(b_+54, b_+55); alu_cpl(gb);
   CYC(b_+55, b_+56); A = alu_inc8(gb, A);
   CYC(b_+56, b_+58); goto write_damage;

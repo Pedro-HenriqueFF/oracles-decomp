@@ -80,6 +80,7 @@ static inline void alu_ccf(GB *gb) { gb->f = (gb->f & FZ) | ((gb->f & FC) ? 0 : 
 static inline void alu_add_sp(GB *gb, uint8_t n) { int8_t d = (int8_t)n; unsigned lo = (gb->sp & 0xff) + n; gb->f = ((gb->sp & 0x0f) + (n & 0x0f) > 0x0f ? FH : 0) | (lo > 0xff ? FC : 0); gb->sp = (uint16_t)(gb->sp + d); }
 static inline void alu_ld_hl_sp(GB *gb, uint8_t n) { int8_t d = (int8_t)n; unsigned lo = (gb->sp & 0xff) + n; gb->f = ((gb->sp & 0x0f) + (n & 0x0f) > 0x0f ? FH : 0) | (lo > 0xff ? FC : 0); SET_HL((uint16_t)(gb->sp + d)); }
 void asm_call(GB *gb, uint16_t target, uint16_t ret_addr);
+void asm_call_c(GB *gb, uint16_t target, uint16_t ret_addr);
 void asm_continue(GB *gb, uint16_t ret_addr, uint16_t sp0);
 #define CALL_ASM(a, target, ra) do { I((a), 5); push_timed(gb, (ra)); asm_call(gb, (target), (ra)); } while (0)
 #define CALL_ASM_RST(a, target, ra) do { I((a), 3); push_timed(gb, (ra)); asm_call(gb, (target), (ra)); } while (0)

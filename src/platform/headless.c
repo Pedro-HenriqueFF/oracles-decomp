@@ -92,7 +92,7 @@ static void on_frame(GB *gb, const GBSample *sm, void *ctx) {
     unsigned item = 0; unsigned long long from = 0, to = 0;
     sscanf(getenv("SLOT_TEST"), "%x:%llu-%llu", &item, &from, &to);
     features.slot_item[0] = (uint8_t)item;
-    if (frame == from) { extra_joy = features_slot_press(gb, 0); fprintf(stderr, "slot press at %llu: joy %02x, B now %02x\n", (unsigned long long)frame, extra_joy, sm->wram[0][wInventoryB & 0xfff]); }
+    if (frame == from) { extra_joy = features_slot_press(gb, 0); fprintf(stderr, "slot press at %llu: joy %02x, B %02x A %02x\n", (unsigned long long)frame, extra_joy, sm->wram[0][wInventoryB & 0xfff], sm->wram[0][wInventoryA & 0xfff]); }
     if (frame == to) { features_slot_release(gb, 0); extra_joy = 0; fprintf(stderr, "slot release at %llu\n", (unsigned long long)frame); }
   }
   if (getenv("SWAP_AT") && frame == strtoull(getenv("SWAP_AT"), NULL, 10))
@@ -117,7 +117,10 @@ static void on_frame(GB *gb, const GBSample *sm, void *ctx) {
   {
     static uint64_t wd_a = 0, wd_b = 0; static bool wd_init = false;
     if (!wd_init) { wd_init = true; if (getenv("WRAMDUMP_AT")) { if (sscanf(getenv("WRAMDUMP_AT"), "%llu-%llu", (unsigned long long *)&wd_a, (unsigned long long *)&wd_b) < 2) wd_b = wd_a; } }
-    if (getenv("WRAMDUMP_AT") && movie_frame >= wd_a && movie_frame <= wd_b) {
+    // WRAMDUMP_AT=a-b dumps every frame of the range; a,b,c (a comma list) just those frames
+    const char *wl = getenv("WRAMDUMP_AT");
+    bool listed = wl && strchr(wl, ',') && screenshot_wanted(wl, movie_frame);
+    if (wl && (listed || (!strchr(wl, ',') && movie_frame >= wd_a && movie_frame <= wd_b))) {
       FILE *wf = fopen(getenv("WRAMDUMP_FILE") ? getenv("WRAMDUMP_FILE") : "wram_at.txt", "a");
       fprintf(wf, "FRAME %llu mcycles %llu cycles %llu ly %u\n", (unsigned long long)movie_frame, (unsigned long long)gb->mcycles, (unsigned long long)gb->cycles, gb->io[R_LY]);
       for (int b = 0; b < 8; b++) for (int i = 0; i < 4096; i++) fprintf(wf, "%02x", sm->wram[b][i]);
@@ -203,6 +206,14 @@ int main(int argc, char **argv) {
   if (init_ram && !oracles_load_init_ram(gb, init_ram)) { fprintf(stderr, "cannot read %s\n", init_ram); return 2; }
   gb_reset(gb);
   if ((p = arg_value(argc, argv, "--boot-state")) && !oracles_load_boot_state(gb, p)) { fprintf(stderr, "cannot read %s\n", p); return 2; }
+  // --sram FILE: battery RAM to start with (a save made elsewhere), as the app loads sram.sav
+  if ((p = arg_value(argc, argv, "--sram"))) {
+    size_t n;
+    uint8_t *s = oracles_read_file(p, &n);
+    if (!s) { fprintf(stderr, "cannot read %s\n", p); return 2; }
+    memcpy(gb->eram, s, n < gb->eram_size ? n : gb->eram_size);
+    free(s);
+  }
   uint64_t reload_at = (p = arg_value(argc, argv, "--reload-at")) ? strtoull(p, NULL, 10) : 0;
   uint64_t reload_every = (p = arg_value(argc, argv, "--reload-every")) ? strtoull(p, NULL, 10) : 0;     // at the first frame after each multiple whose threads are parked (as the app saves)
   bool reload_pending = false;
@@ -330,6 +341,18 @@ int main(int argc, char **argv) {
       // a save state round trip: every thread fiber is dropped, as when the app loads a state
       if (!oracles_save_boot_state(gb, "/tmp/oracles-reload.state") || !oracles_load_boot_state(gb, "/tmp/oracles-reload.state")) return 2;
       fibers_reset(gb);
+    }
+    if (getenv("POKE")) {
+      // POKE="frame:addr=val,addr=val;frame:..." writes WRAM (bank 0/1) before that frame
+      for (const char *q = getenv("POKE"); q && *q; q = strchr(q, ';') ? strchr(q, ';') + 1 : NULL) {
+        unsigned long long at = strtoull(q, NULL, 10);
+        if (at != frame) continue;
+        for (const char *r = strchr(q, ':'); r && *r && *r != ';'; r = strpbrk(r + 1, ",;")) {
+          if (*r == ';') break;
+          unsigned addr, val;
+          if (sscanf(r + 1, "%x=%x", &addr, &val) == 2 && addr >= 0xc000 && addr < 0xe000) gb->wram[addr >> 12 & 1][addr & 0xfff] = (uint8_t)val;
+        }
+      }
     }
     frame = gb_run_frame(gb);
     if (gb->hung) { fprintf(stderr, "cpu hung at frame %llu pc %04x\n", (unsigned long long)frame, gb->pc); return 1; }

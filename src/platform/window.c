@@ -22,16 +22,38 @@ static bool saved_size(const char *size_path, int *w, int *h) {
   return ok;
 }
 
+static SDL_Window *open_win;
+static SDL_Renderer *open_ren;
+
+// Vsync only on displays at least as fast as the Game Boy: every emulated frame is presented, so
+// a slower display would slow the game down.
+static void sync_vsync(void) {
+  const SDL_DisplayMode *m = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(open_win));
+  SDL_SetRenderVSync(open_ren, m && m->refresh_rate >= 59.0f ? 1 : SDL_RENDERER_VSYNC_DISABLED);
+}
+
 bool oracles_open_window(const char *title, const char *size_path, SDL_Window **win, SDL_Renderer **ren, SDL_Texture **tex) {
   int w, h;
   if (!saved_size(size_path, &w, &h)) { int s = default_scale(); w = FB_W * s; h = FB_H * s; }
   if (!SDL_CreateWindowAndRenderer(title, w, h, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY, win, ren)) return false;
+  open_win = *win;
+  open_ren = *ren;
+  sync_vsync();
   SDL_SetWindowMinimumSize(*win, FB_W, FB_H);
   SDL_SetRenderDrawColor(*ren, 0, 0, 0, 255);
   *tex = SDL_CreateTexture(*ren, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, FB_W, FB_H);
   if (!*tex) return false;
   SDL_SetTextureScaleMode(*tex, SDL_SCALEMODE_NEAREST);
   return true;
+}
+
+void oracles_window_event(const SDL_Event *ev) {
+  if (open_ren && (ev->type == SDL_EVENT_WINDOW_DISPLAY_CHANGED || ev->type == SDL_EVENT_DISPLAY_CURRENT_MODE_CHANGED)) sync_vsync();
+}
+
+void oracles_frame_wait(void) {
+  int vsync = SDL_RENDERER_VSYNC_DISABLED;
+  if (!open_ren || !SDL_GetRenderVSync(open_ren, &vsync) || vsync == SDL_RENDERER_VSYNC_DISABLED) SDL_Delay(16);
 }
 
 bool oracles_window_key(SDL_Window *win, const SDL_KeyboardEvent *key) {

@@ -45,11 +45,10 @@ void interactionCodee3_hook(GB *gb) {
   uint16_t sp0_ = gb->sp; (void)sp0_;
   CALL_C(b_+0, checkInteractionState_hook, SYM(checkInteractionState), b_+3);
   if (!(F & FZ)) { CYCT(b_+3, b_+5); goto state1; } CYC(b_+3, b_+5);  // jr nz,@state1
-state0:
   CYC(b_+5, b_+7); A = 0x01;  // ld a,$01
   CYC(b_+7, b_+8); mem_wr(gb, DE, A);  // ld (de),a
   CALL_C(b_+8, interactionInitGraphics_hook, SYM(interactionInitGraphics), b_+11);
-  CYC(b_+11, b_+14); SET_HL((SYM(interactionCodee6__checkLinkWithinRange) + 144));  // ld hl,mainScripts.knowItAllBirdScript
+  CYC(b_+11, b_+14); SET_HL(RV((SYM(interactionCodee6__checkLinkWithinRange) + 144), 0x7f78));  // ld hl,mainScripts.knowItAllBirdScript
   CALL_C(b_+14, interactionSetScript_hook, SYM(interactionSetScript), b_+17);
   CALL_C(b_+17, getRandomNumber_noPreserveVars_hook, SYM(getRandomNumber_noPreserveVars), b_+20);
   CYC(b_+20, b_+22); alu_and(gb, 0x01);  // and $01
@@ -80,7 +79,6 @@ state1:
   CALL_C(b_+70, interactionRunScript_hook, SYM(interactionRunScript), b_+73);
   CALL_C(b_+73, checkInteractionSubstate_hook, SYM(checkInteractionSubstate), b_+76);
   if (!(F & FZ)) { CYCT(b_+76, b_+78); goto substate1; } CYC(b_+76, b_+78);  // jr nz,@substate1
-substate0:
   CYC(b_+78, b_+80); E = INTERACTION_BASE + OBJ_VAR37;  // ld e,Interaction.var37
   CYC(b_+80, b_+81); A = mem_rd(gb, DE);  // ld a,(de)
   CYC(b_+81, b_+82); alu_or(gb, A);  // or a

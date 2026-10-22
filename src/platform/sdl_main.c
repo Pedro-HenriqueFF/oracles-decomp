@@ -242,6 +242,7 @@ int main(int argc, char **argv) {
   while (running) {
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
+      oracles_window_event(&ev);
       switch (ev.type) {
       case SDL_EVENT_QUIT: running = false; break;
       case SDL_EVENT_KEY_DOWN:

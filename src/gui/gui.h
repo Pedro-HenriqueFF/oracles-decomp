@@ -39,6 +39,8 @@ void gui_begin(float scale);
 void gui_end(void);
 float gui_scale(void);
 uint16_t gui_px(float points);
+// Width in pixels of s on one line at this size.
+uint16_t gui_text_width(const char *s, float points);
 // render pixels per point the display asks for (1 on a plain desktop, about 3 on a phone)
 float gui_display_scale(void);
 

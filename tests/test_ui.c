@@ -9,6 +9,7 @@
 #include "ui/upscale.h"
 #include "ui/touch.h"
 #include "ui/syncui.h"
+#include "ui/labels.h"
 
 static uint8_t rom[0x80000];
 
@@ -50,6 +51,9 @@ static void save_files_are_read_and_verified(void) {
   ASSERT_EQ(ui_read_files(sram, sizeof sram, false, f), 1);
   ASSERT(!f[0].valid);
   ASSERT_EQ(ui_read_files(NULL, 0, false, f), 0);
+  make_file(sram + 0x0010, false, "\xc3\xd2\xab" "go", 20, 0);   // the European name entry: Í, á, ñ
+  ASSERT_EQ(ui_read_files(sram, sizeof sram, false, f), 2);
+  ASSERT(f[0].valid && strcmp(f[0].name, "Iango") == 0);
 }
 
 static void home_leads_with_resume_and_slots(void) {
@@ -80,6 +84,9 @@ static void home_leads_with_resume_and_slots(void) {
   ASSERT(!h.files_page);
   home_press(&h, UI_DOWN);
   ASSERT_EQ(home_press(&h, UI_ACCEPT).file, LAUNCH_TITLE);
+  home_press(&h, UI_DOWN);
+  ASSERT_EQ(h.row, HOME_ADD_ROM);
+  ASSERT_EQ(home_press(&h, UI_ACCEPT).action, LAUNCH_ADD_ROM);
   home_press(&h, UI_DOWN);
   ASSERT_EQ(h.row, HOME_SLOT1 + 1);                     // wraps past Resume (none) and slot 1 (empty)
   h.l.games[UI_GAME_SEASONS].has_resume = true;
@@ -170,6 +177,18 @@ static void settings_round_trip(void) {
   settings_parse(&back, "volume=99\nfilter=weird\nunknown=1\n  volume = 7\n");
   ASSERT_EQ(back.volume, 7);                            // 99 rejected, spaced line accepted
   ASSERT_EQ(back.filter, FILTER_CRT);
+  ASSERT_EQ(s.pad_style, STYLE_AUTO);
+  s.pad_style = STYLE_PLAYSTATION;
+  settings_format(&s, buf, sizeof buf);
+  settings_parse(&back, buf);
+  ASSERT_EQ(back.pad_style, STYLE_PLAYSTATION);
+  settings_parse(&back, "controller_style=sega\n");    // unknown: kept as it was
+  ASSERT_EQ(back.pad_style, STYLE_PLAYSTATION);
+  s.pad_style = (PadStyle)99;                          // out of range: written as auto
+  settings_format(&s, buf, sizeof buf);
+  back.pad_style = STYLE_XBOX;                         // so a missing line would show
+  settings_parse(&back, buf);
+  ASSERT_EQ(back.pad_style, STYLE_AUTO);
 }
 
 static void settings_menu_changes_values(void) {
@@ -191,9 +210,15 @@ static void settings_menu_changes_values(void) {
   settings_press(&m, &s, UI_UP, &row);
   settings_press(&m, &s, UI_UP, &row);
   settings_press(&m, &s, UI_UP, &row);
-  ASSERT_EQ(m.sel, SET_SYNC);                           // the last row
+  ASSERT_EQ(m.sel, SET_PORTABLE);                       // the last row
+  ASSERT_EQ(settings_press(&m, &s, UI_ACCEPT, &row), MENU_NONE);
+  ASSERT(s.portable);
+  settings_press(&m, &s, UI_UP, &row);
+  ASSERT_EQ(m.sel, SET_SYNC);
   ASSERT_EQ(settings_press(&m, &s, UI_ACCEPT, &row), MENU_PICK);
   ASSERT_EQ(row, SET_SYNC);
+  settings_press(&m, &s, UI_UP, &row);
+  ASSERT_EQ(m.sel, SET_PAD_STYLE);
   settings_press(&m, &s, UI_UP, &row);
   ASSERT_EQ(m.sel, SET_CONTROLS);
   settings_press(&m, &s, UI_UP, &row);
@@ -228,9 +253,12 @@ static void settings_rows_follow_the_device(void) {
   settings_press(&m, &s, UI_DOWN, &row);
   ASSERT_EQ(m.sel, SET_CONTROLS);
   ASSERT(settings_row_shown(&m, SET_FULLSCREEN));
+  ASSERT(settings_row_shown(&m, SET_PAD_STYLE));
+  ASSERT(settings_row_shown(&m, SET_PORTABLE));
   settings_menu_open(&m, true);                         // a phone: Vibration, and no Fullscreen
   ASSERT(settings_row_shown(&m, SET_HAPTICS));
   ASSERT(!settings_row_shown(&m, SET_FULLSCREEN));
+  ASSERT(!settings_row_shown(&m, SET_PORTABLE));        // Android keeps its data where the system says
   m.sel = SET_COLOURS;
   settings_press(&m, &s, UI_DOWN, &row);
   ASSERT_EQ(m.sel, SET_FAST_TEXT);
@@ -243,6 +271,16 @@ static void settings_rows_follow_the_device(void) {
   ASSERT(s.haptics);
   settings_press(&m, &s, UI_UP, &row);
   ASSERT_EQ(m.sel, SET_FOUR_SLOTS);
+  m.sel = SET_CONTROLS;
+  settings_press(&m, &s, UI_DOWN, &row);
+  ASSERT_EQ(m.sel, SET_PAD_STYLE);                     // shown on phones too
+  settings_press(&m, &s, UI_RIGHT, &row);
+  ASSERT_EQ(s.pad_style, STYLE_NINTENDO);
+  settings_press(&m, &s, UI_LEFT, &row);
+  settings_press(&m, &s, UI_LEFT, &row);
+  ASSERT_EQ(s.pad_style, STYLE_PLAYSTATION);           // wraps
+  ASSERT_EQ(settings_press(&m, &s, UI_ACCEPT, &row), MENU_NONE); // accept steps, not opens
+  ASSERT_EQ(s.pad_style, STYLE_AUTO);
 }
 
 static void filters_keep_pixel_alignment(void) {
@@ -603,6 +641,52 @@ static void upscale_factor_is_capped_at_the_window_scale(void) {
   ASSERT_EQ(memcmp(asked, capped, sizeof asked), 0);
 }
 
+static void labels_follow_device_style_and_bindings(void) {
+  ASSERT_EQ(pad_style_resolve(STYLE_AUTO, STYLE_PLAYSTATION), STYLE_PLAYSTATION);
+  ASSERT_EQ(pad_style_resolve(STYLE_AUTO, STYLE_AUTO), STYLE_XBOX);              // no pad seen yet
+  ASSERT_EQ(pad_style_resolve(STYLE_NINTENDO, STYLE_PLAYSTATION), STYLE_NINTENDO); // the setting wins
+  const char *ok, *back;
+  menu_hint_keys(DEVICE_KEYBOARD, STYLE_PLAYSTATION, &ok, &back);
+  ASSERT(!strcmp(ok, "Enter") && !strcmp(back, "Esc"));
+  menu_hint_keys(DEVICE_PAD, STYLE_PLAYSTATION, &ok, &back);
+  ASSERT(!strcmp(ok, "Cross") && !strcmp(back, "Circle"));
+  menu_hint_keys(DEVICE_PAD, STYLE_XBOX, &ok, &back);
+  ASSERT(!strcmp(ok, "A") && !strcmp(back, "B"));
+  menu_hint_keys(DEVICE_PAD, STYLE_NINTENDO, &ok, &back);
+  ASSERT(!strcmp(ok, "A") && !strcmp(back, "B"));
+  ASSERT(!strcmp(pad_style_name(STYLE_PLAYSTATION, 2), "SQUARE"));
+  ASSERT(!strcmp(pad_style_name(STYLE_XBOX, 4), "VIEW"));
+  ASSERT(pad_style_name(STYLE_NINTENDO, 0) == NULL);
+  ASSERT(!strcmp(pad_style_name(STYLE_PLAYSTATION, PAD_RIGHT_TRIGGER), "R2"));
+  Bindings b;
+  bindings_default(&b);
+  // keyboard: A X, B Z, Item X A, Item Y S
+  ASSERT_EQ(hud_slot_glyph(DEVICE_KEYBOARD, STYLE_XBOX, &b, HUD_A), 'X');
+  ASSERT_EQ(hud_slot_glyph(DEVICE_KEYBOARD, STYLE_XBOX, &b, HUD_B), 'Z');
+  ASSERT_EQ(hud_slot_glyph(DEVICE_KEYBOARD, STYLE_XBOX, &b, HUD_Y), 'S');
+  bindings_bind_key(&b, ACT_A, 44);                                      // Space: no glyph
+  ASSERT_EQ(hud_slot_glyph(DEVICE_KEYBOARD, STYLE_XBOX, &b, HUD_A), 'A');
+  bindings_bind_key(&b, ACT_B, 31);                                      // 2
+  ASSERT_EQ(hud_slot_glyph(DEVICE_KEYBOARD, STYLE_XBOX, &b, HUD_B), '2');
+  // pads: A SOUTH, B WEST, Item X NORTH, Item Y EAST
+  ASSERT_EQ(hud_slot_glyph(DEVICE_PAD, STYLE_XBOX, &b, HUD_B), 'X');
+  ASSERT_EQ(hud_slot_glyph(DEVICE_PAD, STYLE_XBOX, &b, HUD_X), 'Y');
+  ASSERT_EQ(hud_slot_glyph(DEVICE_PAD, STYLE_PLAYSTATION, &b, HUD_A), HUD_GLYPH_CROSS);
+  ASSERT_EQ(hud_slot_glyph(DEVICE_PAD, STYLE_PLAYSTATION, &b, HUD_Y), HUD_GLYPH_CIRCLE);
+  ASSERT_EQ(hud_slot_glyph(DEVICE_PAD, STYLE_NINTENDO, &b, HUD_B), 'B');  // Game Boy letters
+  bindings_bind_pad(&b, ACT_A, 9);                                        // LB: no glyph
+  ASSERT_EQ(hud_slot_glyph(DEVICE_PAD, STYLE_XBOX, &b, HUD_A), 'A');
+  ASSERT_EQ(hud_slot_glyph(DEVICE_TOUCH, STYLE_PLAYSTATION, &b, HUD_A), 'A');
+  bindings_default(&b);                                                   // A on NORTH, as the spec has it
+  bindings_bind_pad(&b, ACT_A, 3);
+  ASSERT_EQ(hud_slot_glyph(DEVICE_PAD, STYLE_XBOX, &b, HUD_A), 'Y');
+  ASSERT_EQ(hud_slot_glyph(DEVICE_PAD, STYLE_PLAYSTATION, &b, HUD_A), HUD_GLYPH_TRIANGLE);
+  bindings_default(&b);
+  b.key[ACT_ITEM_X][0] = b.key[ACT_ITEM_X][1] = NO_BINDING;               // unbound: the slot letter
+  ASSERT_EQ(hud_slot_glyph(DEVICE_KEYBOARD, STYLE_XBOX, &b, HUD_X), 'X');
+  ASSERT(pad_style_name(STYLE_XBOX, 11) == NULL);                         // d-pad: SDL's own name
+}
+
 int main(void) {
   RUN(font_loads_from_the_rom_offset);
   RUN(save_files_are_read_and_verified);
@@ -623,6 +707,7 @@ int main(void) {
   RUN(the_two_scalers_differ);
   RUN(upscale_factor_is_capped_at_the_window_scale);
   RUN(bindings_remap_and_persist);
+  RUN(labels_follow_device_style_and_bindings);
   RUN(touch_layout_fits_screens);
   RUN(sync_page_shows_the_rows_for_its_state);
   RUN(code_entry_edits_each_digit);

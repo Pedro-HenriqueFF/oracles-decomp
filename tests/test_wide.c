@@ -1,8 +1,9 @@
 // Widescreen's room renderer against the PPU: through a movie, every sampled frame in normal play
 // is drawn by wide_room_pixel over the middle 160 columns too, and must equal the emulator's
-// picture wherever no sprite covers it. Then the neighbours: what a strip showed of the next room
+// picture wherever no sprite covers it, and each screen transition's first frame keeps the strips
+// of the frame before. Then the neighbours: what a strip showed of the next room
 // against that room's own picture once the movie is in it. (Skipped without the ROM.)
-// WIDE_PNG=frame:path saves a widescreen frame (any frame, room changes included); WIDE_ONLY_NEIGHBOURS=1 runs only the neighbour
+// WIDE_ONLY_SPRITES=1 runs only the sprite checks. WIDE_PNG=frame:path saves a widescreen frame (any frame, room changes included); WIDE_ONLY_NEIGHBOURS=1 runs only the neighbour
 // checks, WIDE_PAIRS=1 lists each pair, WIDE_PAIR_PNG=room:season:path (WIDE_PAIR_AGES=1 for Ages)
 // saves a pair's strips beside the real columns; WIDE_TIME=1 prints the renderer's cost per frame.
 #include "unit.h"
@@ -13,11 +14,72 @@
 #include "assets/assets.h"
 #include "wide/wide.h"
 #include "wide/item.h"
+#include "wide/npcs.h"
+#include "wide/room.h"
 #include "platform/png.h"
 #include <stdlib.h>
 #include <time.h>
 
 static uint8_t tas_cb(void *ctx, uint64_t frame) { return tas_input_at((const Tas *)ctx, frame); }
+
+// A screen transition's first frame (scroll mode 4): the screen and its scroll are still the room
+// Link is leaving, whether the frame ended before or after the game stepped wActiveRoom on to the
+// next one (wLoadingRoom stays the room on screen until the load), so the strips must be the ones
+// of the frame before on every line no sprite reaches. Checked on every frame of the movies.
+typedef struct {
+  bool seasons;
+  const uint8_t *rom;
+  size_t rom_size;
+  GBSample prev;
+  bool have_prev;
+  int checked, stepped, bad;
+} FirstStepCheck;
+
+static bool line_has_sprite(const GBSample *s, int y) {
+  int h = (s->line_lcdc[y] & 0x04) ? 16 : 8;
+  for (int d = 0; d < 2; d++) {
+    const uint8_t *oam = s->drawn_oam[d];
+    for (int i = 0; i < 40; i++)
+      if (y >= oam[i * 4] - 16 && y < oam[i * 4] - 16 + h) return true;
+    const OffscreenSprites *off = &s->drawn_offscreen[d];
+    for (int i = 0; i < off->n; i++)
+      if (y >= off->s[i].y && y < off->s[i].y + h) return true;
+  }
+  return false;
+}
+
+static void check_first_step(FirstStepCheck *c, const GBSample *s) {
+  const uint8_t *w = s->wram[0], *p = c->prev.wram[0];
+  int group = c->seasons ? 0xc49 : 0xc2d, room = c->seasons ? 0xc4c : 0xc30, loading = room - 1;   // wLoadingRoom
+  if (c->have_prev && (w[0xd00] & 0x0f) == 4 && (p[0xd00] & 0x0f) == 1 && w[group] == p[group] && p[room] == p[loading] &&
+      w[loading] == p[loading] && !w[0x4ab] && !p[0x4ab]) {
+    static uint8_t before[WIDE_W * FB_H * 3], now[WIDE_W * FB_H * 3];
+    WideOptions o = {.seasons = c->seasons, .border = {1, 2, 3}, .rom = c->rom, .rom_size = c->rom_size};
+    wide_render(&c->prev, &o, before);
+    wide_render(s, &o, now);
+    long compared = 0, same = 0;
+    for (int y = 16; y < FB_H; y++) {
+      if (line_has_sprite(s, y) || line_has_sprite(&c->prev, y) || s->line_scx[y] != c->prev.line_scx[y] ||
+          s->line_scy[y] != c->prev.line_scy[y] || (s->line_lcdc[y] & 0x81) != 0x81)
+        continue;
+      for (int x = 0; x < WIDE_W; x++) {
+        if (x == WIDE_SIDE) x += FB_W;
+        size_t i = ((size_t)y * WIDE_W + x) * 3;
+        compared++;
+        same += !memcmp(before + i, now + i, 3);
+      }
+    }
+    if (compared) {
+      c->checked++;
+      c->stepped += w[room] != w[loading];
+      if (same * 100 < compared * 95 && c->bad++ < 5)
+        fprintf(stderr, "    frame %llu: room %02x (on screen %02x), %.0f%% of the strips as the frame before\n", (unsigned long long)s->frame,
+                w[room], w[loading], 100.0 * same / compared);
+    }
+  }
+  memcpy(&c->prev, s, sizeof *s);
+  c->have_prev = true;
+}
 
 typedef struct {
   bool seasons;
@@ -25,11 +87,12 @@ typedef struct {
   bool saved;
   const uint8_t *rom;
   size_t rom_size;
+  FirstStepCheck *step;
 } WideCheck;
 
 static bool under_sprite(const GBSample *s, int x, int y) {
   int h = (s->line_lcdc[y] & 0x04) ? 16 : 8;
-  const uint8_t *oam = s->drawn_oam[s->line_drawn[y]];
+  const uint8_t *oam = s->drawn_oam[s->line_drawn[y] & 1];
   for (int i = 0; i < 40; i++) {
     int sy = oam[i * 4] - 16, sx = oam[i * 4 + 1] - 8;
     if (x >= sx && x < sx + 8 && y >= sy && y < sy + h) return true;
@@ -40,11 +103,12 @@ static bool under_sprite(const GBSample *s, int x, int y) {
 static void check_cb(GB *gb, const GBSample *s, void *ctx) {
   (void)gb;
   WideCheck *c = ctx;
+  check_first_step(c->step, s);
   if (getenv("WIDE_TIME") && c->seasons && s->frame >= 3000 && s->frame < 13000) {   // the renderer's cost per frame
     static uint8_t wide[WIDE_W * FB_H * 3];
     static double total, worst;
     static int n;
-    WideOptions o = {c->seasons, true, {40, 32, 16}, c->rom, c->rom_size, false, {0, 0}};
+    WideOptions o = {c->seasons, true, {40, 32, 16}, c->rom, c->rom_size, false, {0, 0}, NULL, {0}};
     struct timespec t0, t1;
     clock_gettime(CLOCK_MONOTONIC, &t0);
     wide_render(s, &o, wide);
@@ -59,7 +123,7 @@ static void check_cb(GB *gb, const GBSample *s, void *ctx) {
   char path[400];
   if (png && sscanf(png, "%llu:%399s", &at, path) == 2 && s->frame >= at && !c->saved) {
     static uint8_t wide[WIDE_W * FB_H * 3];
-    WideOptions o = {c->seasons, true, {40, 32, 16}, c->rom, c->rom_size, false, {0, 0}};
+    WideOptions o = {c->seasons, true, {40, 32, 16}, c->rom, c->rom_size, false, {0, 0}, NULL, {0}};
     wide_render(s, &o, wide);
     char full[440];
     snprintf(full, sizeof full, "%s-%s.png", path, c->seasons ? "seasons" : "ages");
@@ -94,16 +158,23 @@ static void check_movie(const char *rom_path, const char *inputs, const char *st
   assets_zero_code(rom, n);
   gb_reset(gb);
   if (!oracles_load_boot_state(gb, state_path)) SKIP("boot state missing");
-  WideCheck c = {seasons, 0, 0, 0, 0, 0, false, rom, n};
+  FirstStepCheck *step = calloc(1, sizeof *step);
+  step->seasons = seasons; step->rom = rom; step->rom_size = n;
+  WideCheck c = {seasons, 0, 0, 0, 0, 0, false, rom, n, step};
   gb->input_at = tas_cb; gb->input_ctx = &t;
   gb->frame_cb = check_cb; gb->frame_ctx = &c;
   for (uint64_t i = 0; i < frames && !gb->hung; i++) gb_run_frame(gb);
   printf("  %llu frames checked (%llu in large rooms), %llu pixels, %llu differ (first at frame %llu)\n",
          (unsigned long long)c.checked, (unsigned long long)c.large, (unsigned long long)c.pixels,
          (unsigned long long)c.mismatches, (unsigned long long)c.first_bad);
+  printf("  %d screen transitions checked from their first frame (%d with the room already stepped on), %d with other strips\n",
+         step->checked, step->stepped, step->bad);
   ASSERT(c.checked > 100);
   ASSERT(c.large > 10);
   ASSERT_EQ(c.mismatches, 0);
+  ASSERT(step->checked > 10);
+  ASSERT_EQ(step->bad, 0);
+  free(step);
 }
 
 // Neighbours against the game: while standing in a small overworld room the strips show the rooms
@@ -138,7 +209,7 @@ static void neighbour_cb(GB *gb, const GBSample *s, void *ctx) {
   RoomView *v = &c->views[c->n++];
   v->group = group; v->room = room; v->modifier = modifier; v->have_view = true;
   static uint8_t wide[WIDE_W * FB_H * 3];
-  WideOptions o = {c->seasons, false, {1, 2, 3}, c->rom, c->rom_size, false, {0, 0}};
+  WideOptions o = {c->seasons, false, {1, 2, 3}, c->rom, c->rom_size, false, {0, 0}, NULL, {0}};
   wide_render(s, &o, wide);
   for (int y = 0; y < FB_H; y++)
     for (int x = 0; x < WIDE_SIDE; x++)
@@ -168,7 +239,7 @@ static void neighbours_match(const char *rom_path, const char *inputs, const cha
   gb->input_at = tas_cb; gb->input_ctx = &t;
   gb->frame_cb = neighbour_cb; gb->frame_ctx = &c;
   for (uint64_t i = 0; i < frames && !gb->hung; i++) gb_run_frame(gb);
-  long pairs = 0, shown = 0, same = 0, compared = 0;
+  long pairs = 0, same = 0, compared = 0;
   for (int i = 0; i < c.n; i++)
     for (int j = 0; j < c.n; j++) {
       const RoomView *a = &c.views[i], *b = &c.views[j];
@@ -181,7 +252,6 @@ static void neighbours_match(const char *rom_path, const char *inputs, const cha
           uint16_t checks[2][2] = {{a->strip[1][y][x], b->edge[0][y][x]}, {b->strip[0][y][x], a->edge[1][y][x]}};
           for (int k = 0; k < 2; k++) {
             if (checks[k][0] == 0x8000 || checks[k][1] == 0x8000) continue;
-            shown++;
             compared++;
             pair_n++;
             if ((checks[k][0] & 0x7fff) == (checks[k][1] & 0x7fff)) { same++; pair_same++; }
@@ -233,6 +303,98 @@ static void ages_room_pixels_match_the_ppu(void) {
               TAS_DIR "/ages-boot.state", 289518, false);
 }
 
+// Sprites past the screen's edges (#21): when the screen has scrolled left, Impa is put at x 167,
+// just past the right edge, and walks back in; the GBC drops her sprites there and the strip shows
+// them instead, in step with the half the GBC still draws.
+typedef struct { int frames, seen; } ImpaCheck;
+
+static void impa_cb(GB *gb, const GBSample *s, void *ctx) {
+  (void)gb;
+  ImpaCheck *c = ctx;
+  if (s->frame < 2348 || s->frame > 2352) return;
+  c->frames++;
+  const OffscreenSprites *o = &s->drawn_offscreen[s->line_drawn[100]];
+  for (int i = 0; i < o->n; i++)
+    if (o->s[i].x >= FB_W && o->s[i].x < FB_W + 16 && o->s[i].y > 80 && o->s[i].y < 112) { c->seen++; break; }
+}
+
+static void ages_strips_show_impa_past_the_edge(void) {
+  size_t n;
+  uint8_t *rom = oracles_read_file(GAME_ROM_DIR "/Legend of Zelda, The - Oracle of Ages (USA, Australia).gbc", &n);
+  if (!rom) SKIP("ROM not present");
+  Tas t;
+  if (!tas_load(&t, TAS_DIR "/ages-consoleverified.inputs")) SKIP("inputs missing");
+  GB *gb = calloc(1, sizeof *gb);
+  gb_init(gb);
+  ASSERT(gb_load_rom(gb, rom, n));
+  gb->cyctab = cyctab_alloc(rom, n);
+  assets_zero_code(rom, n);
+  gb_reset(gb);
+  if (!oracles_load_boot_state(gb, TAS_DIR "/ages-boot.state")) SKIP("boot state missing");
+  ImpaCheck c = {0, 0};
+  gb->input_at = tas_cb; gb->input_ctx = &t;
+  gb->frame_cb = impa_cb; gb->frame_ctx = &c;
+  for (int i = 0; i < 2360 && !gb->hung; i++) gb_run_frame(gb);
+  ASSERT_EQ(c.frames, 5);
+  ASSERT_EQ(c.seen, 5);
+}
+
+// The characters of the rooms beside the screen: a copy of the game goes into each one. In the
+// past's Lynna village (1:49) two villagers of 1:48 stand within the strip's 48 pixels of the shared
+// edge. The copies must leave the game itself exactly as it was.
+static uint64_t run_ages_to(uint64_t frames, bool npcs, int *edge_pixels, int *random_pixels) {
+  size_t n;
+  uint8_t *rom = oracles_read_file(GAME_ROM_DIR "/Legend of Zelda, The - Oracle of Ages (USA, Australia).gbc", &n);
+  if (!rom) SKIP("ROM not present");
+  static Tas t;
+  if (!tas_load(&t, TAS_DIR "/ages-consoleverified.inputs")) SKIP("inputs missing");
+  GB *gb = calloc(1, sizeof *gb);
+  gb_init(gb);
+  ASSERT(gb_load_rom(gb, rom, n));
+  gb->cyctab = cyctab_alloc(rom, n);
+  assets_zero_code(rom, n);
+  gb_reset(gb);
+  if (!oracles_load_boot_state(gb, TAS_DIR "/ages-boot.state")) SKIP("boot state missing");
+  gb->input_at = tas_cb; gb->input_ctx = &t;
+  wide_npcs_reset();
+  for (uint64_t i = 0; i < frames && !gb->hung; i++) {
+    gb_run_frame(gb);
+    if (npcs && wide_npcs_update(gb)) wide_npcs_work();
+  }
+  if (edge_pixels) {
+    *edge_pixels = 0;
+    const WideRoomSprites *r = wide_npcs_room(1, 0x48);
+    for (int y = 0; r && y < 128; y++)
+      for (int x = FB_W - WIDE_SIDE; x < FB_W; x++) *edge_pixels += r->c[y][x] >= 0;
+  }
+  if (random_pixels) {
+    // room $54 of the past holds only enemies its object list places at random
+    *random_pixels = -1;
+    const WideRoomSprites *r = wide_npcs_room(1, 0x54);
+    if (!r) r = wide_npcs_room(0, 0x54);
+    if (r) {
+      *random_pixels = 0;
+      for (int y = 0; y < 176; y++)
+        for (int x = 0; x < 256; x++) *random_pixels += r->c[y][x] >= 0;
+    }
+  }
+  uint64_t h = gb_state_hash(gb);
+  wide_npcs_stop();
+  return h;
+}
+
+static void ages_strips_show_the_neighbours_characters(void) {
+  int pixels, random;
+  uint64_t with = run_ages_to(19300, true, &pixels, NULL), without = run_ages_to(19300, false, NULL, NULL);
+  printf("  %d pixels of 1:48's characters by the edge\n", pixels);
+  ASSERT(pixels > 100);
+  ASSERT_EQ(with, without);
+  // enemies placed at a random spot would stand elsewhere once Link walks in: never shown
+  run_ages_to(20000, true, NULL, &random);
+  printf("  room $54's randomly placed enemies: %d pixels\n", random);
+  ASSERT_EQ(random, 0);
+}
+
 // The X and Y item icons, which the game never draws: decoded straight from the ROM, so the values
 // here are the ones in data/seasons/treasureDisplayData.s.
 static int icon_colours(const WideItemIcon *ic) {
@@ -272,7 +434,78 @@ static void item_icons_decode_from_the_rom(void) {
   free(rom);
 }
 
-// wide_room_origin against the game's own camera (hCameraX/hCameraY, 16-bit) through the first
+// The map (#24): a menu over the whole screen keeps the status bar's split flag but draws its own
+// top lines, so with the X and Y boxes on they must stay where the game put them.
+typedef struct { const uint8_t *rom; size_t rom_size; int maps, differ; } MapCheck;
+
+static void map_cb(GB *gb, const GBSample *s, void *ctx) {
+  (void)gb;
+  MapCheck *c = ctx;
+  if (s->wram[0][0xbcb] != 0x02 || s->line_lcdc[0] != s->line_lcdc[16]) return;
+  static uint8_t with[WIDE_W * FB_H * 3], without[WIDE_W * FB_H * 3];
+  WideOptions on = {true, true, {40, 32, 16}, c->rom, c->rom_size, true, {0x05, 0x06}, NULL, {0}};
+  WideOptions off = on;
+  off.slots = false;
+  wide_render(s, &on, with);
+  wide_render(s, &off, without);
+  c->maps++;
+  for (int y = 0; y < 16; y++)                          // the middle only: the strips' menu colour is held across calls
+    if (memcmp(with + ((size_t)y * WIDE_W + WIDE_SIDE) * 3, without + ((size_t)y * WIDE_W + WIDE_SIDE) * 3, FB_W * 3)) { c->differ++; break; }
+}
+
+static void seasons_map_has_no_status_bar(void) {
+  size_t n;
+  uint8_t *rom = oracles_read_file(GAME_ROM_DIR "/Legend of Zelda, The - Oracle of Seasons (USA, Australia).gbc", &n);
+  if (!rom) SKIP("ROM not present");
+  Tas t;
+  if (!tas_load(&t, TAS_DIR "/seasons-play.inputs")) SKIP("inputs missing");
+  GB *gb = calloc(1, sizeof *gb);
+  gb_init(gb);
+  ASSERT(gb_load_rom(gb, rom, n));
+  gb->cyctab = cyctab_alloc(rom, n);
+  assets_zero_code(rom, n);
+  gb_reset(gb);
+  if (!oracles_load_boot_state(gb, TAS_DIR "/seasons-boot.state")) SKIP("boot state missing");
+  MapCheck c = {rom, n, 0, 0};
+  gb->input_at = tas_cb; gb->input_ctx = &t;
+  gb->frame_cb = map_cb; gb->frame_ctx = &c;
+  for (uint64_t i = 0; i < 265064 && c.maps < 60 && !gb->hung; i++) gb_run_frame(gb);
+  printf("  %d map frames, %d with the bar drawn over them\n", c.maps, c.differ);
+  ASSERT(c.maps > 0);
+  ASSERT_EQ(c.differ, 0);
+}
+
+// Temple Remains once the volcano has erupted (#24): the game loads its lava layouts from rooms past
+// the end of the Subrosia map and takes the tileset from templeRemainsSeasons
+// (data/seasons/tilesets.s: $0f $01, mapping $16, layout group $04, animations $08), so a strip
+// beside one shows lava and not the grass it had before.
+static void seasons_temple_remains_after_the_eruption(void) {
+  size_t n;
+  uint8_t *rom = oracles_read_file(GAME_ROM_DIR "/Legend of Zelda, The - Oracle of Seasons (USA, Australia).gbc", &n);
+  if (!rom) SKIP("ROM not present");
+  static WideRoom before, after;
+  for (int season = 0; season < 4; season++) {
+    WideRoomKey k;
+    memset(&k, 0, sizeof k);
+    k.room = 0x25;
+    k.season = season;
+    ASSERT(wide_decode_room(rom, n, true, &k, &before));
+    k.remains_lava = true;
+    ASSERT(wide_decode_room(rom, n, true, &k, &after));
+    ASSERT_EQ(after.tileset[0], 0x0f);
+    ASSERT_EQ(after.tileset[5], 0x16);
+    ASSERT_EQ(after.tileset[6], 0x04);
+    ASSERT(memcmp(before.layout, after.layout, sizeof before.layout) != 0);
+    k.room = 0x18;                                       // outside the Remains: the flag changes nothing
+    ASSERT(wide_decode_room(rom, n, true, &k, &after));
+    k.remains_lava = false;
+    ASSERT(wide_decode_room(rom, n, true, &k, &before));
+    ASSERT(memcmp(&before, &after, sizeof before) == 0);
+  }
+  free(rom);
+}
+
+// wide_play_origin against the game's own camera (hCameraX/hCameraY, 16-bit) through the first
 // 60000 movie frames. The origin is the drawn picture's, so it equals the camera except while the
 // camera moves (one frame behind: the previous frame's camera) and during a screen shake (up to 3
 // pixels off). Most frames must match exactly, none may be off by more than that, and the camera
@@ -291,7 +524,7 @@ static void origin_cb(GB *gb, const GBSample *s, void *ctx) {
   int cy = s->hram[c->cy - 0xff80] | s->hram[c->cy - 0xff80 + 1] << 8;
   int cx = s->hram[c->cx - 0xff80] | s->hram[c->cx - 0xff80 + 1] << 8;
   int rx, ry;
-  if (wide_room_origin(s, c->seasons, &rx, &ry)) {
+  if (wide_play_origin(s, c->seasons, &rx, &ry)) {
     c->shown++;
     if (rx >= 16) c->moved_x++;
     if (ry >= 16) c->moved_y++;
@@ -336,24 +569,33 @@ static void origin_follows_the_camera(const char *rom_path, const char *inputs, 
   free(rom);
 }
 
-static void seasons_room_origin_follows_the_camera(void) {
+static void seasons_play_origin_follows_the_camera(void) {
   origin_follows_the_camera(GAME_ROM_DIR "/Legend of Zelda, The - Oracle of Seasons (USA, Australia).gbc", TAS_DIR "/seasons-play.inputs",
                             TAS_DIR "/seasons-boot.state", true);
 }
 
-static void ages_room_origin_follows_the_camera(void) {
+static void ages_play_origin_follows_the_camera(void) {
   origin_follows_the_camera(GAME_ROM_DIR "/Legend of Zelda, The - Oracle of Ages (USA, Australia).gbc", TAS_DIR "/ages-consoleverified.inputs",
                             TAS_DIR "/ages-boot.state", false);
 }
 
 int main(void) {
+  if (getenv("WIDE_ONLY_SPRITES")) {
+    RUN(ages_strips_show_impa_past_the_edge);
+    RUN(ages_strips_show_the_neighbours_characters);
+    return 0;
+  }
   if (!getenv("WIDE_ONLY_NEIGHBOURS")) {
     RUN(seasons_room_pixels_match_the_ppu);
     RUN(ages_room_pixels_match_the_ppu);
   }
-  RUN(seasons_room_origin_follows_the_camera);
-  RUN(ages_room_origin_follows_the_camera);
+  RUN(seasons_play_origin_follows_the_camera);
+  RUN(ages_play_origin_follows_the_camera);
   RUN(item_icons_decode_from_the_rom);
+  RUN(seasons_temple_remains_after_the_eruption);
+  RUN(seasons_map_has_no_status_bar);
+  RUN(ages_strips_show_impa_past_the_edge);
+  RUN(ages_strips_show_the_neighbours_characters);
   RUN(seasons_neighbours_match_the_rooms);
   RUN(ages_neighbours_match_the_rooms);
   return 0;

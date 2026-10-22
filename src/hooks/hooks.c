@@ -3,6 +3,8 @@
 #include "core/bus.h"
 #include "game/gen.h"
 #include "game/seasons/gen.h"
+#include "game/eu/gen_ages.h"
+#include "game/eu/gen_seasons.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,21 +14,30 @@ int hook_mode = HOOK_MODE_REPLACE;
 uint64_t hook_verify_failures;
 bool hook_verify_abort = true;
 
-#define HOOK(bank, addr, name, flags) {bank, addr, #name, name, 0, flags},
+#define HOOK(bank, addr, name, flags) {bank, addr, #name, name, 0, flags, 0},
 static Hook hooks_ages[] = {
 #include "hooks/table.h"
 };
 static Hook hooks_seasons[] = {
 #include "hooks/table_seasons.h"
 };
+// the European ROMs: the hooks whose routines the EU build left unchanged (tools/eu_hooks.py)
+static Hook hooks_ages_eu[] = {
+#include "hooks/table_eu.h"
+};
+static Hook hooks_seasons_eu[] = {
+#include "hooks/table_seasons_eu.h"
+};
 #undef HOOK
 static Hook *hooks = hooks_ages;
 static size_t NHOOKS = sizeof hooks_ages / sizeof hooks_ages[0];
 static int16_t first_at[65536];
-static int depth;
-static jmp_buf hook_jmp_main[128];
-static jmp_buf *hook_jmp = hook_jmp_main;
-static int hook_jmp_depth;
+// Per thread: widescreen runs a copy of the game on a thread of its own (wide/npcs.c).
+static _Thread_local int depth;
+static _Thread_local jmp_buf hook_jmp_main[128];
+static _Thread_local jmp_buf *hook_jmp;
+static _Thread_local int hook_jmp_depth;
+static jmp_buf *jmps(void) { return hook_jmp ? hook_jmp : (hook_jmp = hook_jmp_main); }
 
 void hook_ctx_init(HookCtx *c) { c->depth = c->jmp_depth = 0; c->jmp = calloc(128, sizeof(jmp_buf)); }
 void hook_ctx_switch(HookCtx *save, const HookCtx *load) {
@@ -36,7 +47,7 @@ void hook_ctx_switch(HookCtx *save, const HookCtx *load) {
 
 void hook_handoff(GB *gb, uint16_t pc) {
   gb->pc = pc;
-  if (hook_jmp_depth > 0 && hook_mode != HOOK_MODE_OFF) longjmp(hook_jmp[hook_jmp_depth - 1], 1);
+  if (hook_jmp_depth > 0 && hook_mode != HOOK_MODE_OFF) longjmp(jmps()[hook_jmp_depth - 1], 1);
 }
 static bool inited;
 
@@ -66,10 +77,11 @@ static Hook *lookup(const GB *gb, uint16_t pc) {
     g->hooks_checked = true;
     bool ages = gb->rom_size > 0x150 && memcmp(gb->rom + 0x134, "ZELDA NAYRU", 11) == 0;
     bool seasons = gb->rom_size > 0x150 && memcmp(gb->rom + 0x134, "ZELDA DIN", 9) == 0;
+    bool eu = gb->rom_size > 0x150 && gb->rom[0x142] == 'P';
     g->hooks_ok = ages || seasons;
-    syms_select(seasons);
-    hooks = seasons ? hooks_seasons : hooks_ages;
-    NHOOKS = seasons ? sizeof hooks_seasons / sizeof hooks_seasons[0] : sizeof hooks_ages / sizeof hooks_ages[0];
+    syms_select(seasons, eu);
+    if (seasons) { hooks = eu ? hooks_seasons_eu : hooks_seasons; NHOOKS = eu ? sizeof hooks_seasons_eu / sizeof hooks_seasons_eu[0] : sizeof hooks_seasons / sizeof hooks_seasons[0]; }
+    else { hooks = eu ? hooks_ages_eu : hooks_ages; NHOOKS = eu ? sizeof hooks_ages_eu / sizeof hooks_ages_eu[0] : sizeof hooks_ages / sizeof hooks_ages[0]; }
     hooks_init();
   }
   if (!gb->hooks_ok) return NULL;
@@ -168,7 +180,7 @@ static void verify(GB *gb, Hook *h) {
   depth++;
   hook_in_verify++;
   hook_suppress_interrupts++;
-  if (hook_jmp_depth < 128) { hook_jmp_depth++; if (setjmp(hook_jmp[hook_jmp_depth - 1]) == 0) h->fn(gb); hook_jmp_depth--; } else h->fn(gb);
+  if (hook_jmp_depth < 128) { hook_jmp_depth++; if (setjmp(jmps()[hook_jmp_depth - 1]) == 0) h->fn(gb); hook_jmp_depth--; } else h->fn(gb);
   hook_in_verify = hiv0;
   depth = depth0;
   hook_suppress_interrupts--;
@@ -236,7 +248,7 @@ static void report_mismatch(Hook *h, const char *bad, size_t off, const GB *c, c
 static void shadow(GB *gb, Hook *h) {
   static const char *only; static int only_init;
   if (!only_init) { only_init = 1; only = getenv("SHADOW_ONLY"); }
-  if (only && strcmp(only, h->name) != 0) { if (hook_jmp_depth < 128) { hook_jmp_depth++; if (setjmp(hook_jmp[hook_jmp_depth - 1]) == 0) h->fn(gb); hook_jmp_depth--; } else h->fn(gb); return; }
+  if (only && strcmp(only, h->name) != 0) { if (hook_jmp_depth < 128) { hook_jmp_depth++; if (setjmp(jmps()[hook_jmp_depth - 1]) == 0) h->fn(gb); hook_jmp_depth--; } else h->fn(gb); return; }
   const int my = verify_depth;
   if (my >= 16) { h->fn(gb); return; }
   if (!snap_pool[my][0]) { snap_pool[my][0] = malloc(sizeof(GB)); snap_pool[my][1] = malloc(sizeof(GB)); }
@@ -248,7 +260,7 @@ static void shadow(GB *gb, Hook *h) {
   static int vlog = -1; if (vlog < 0) vlog = getenv("VERIFYLOG") != NULL;
   if (vlog) fprintf(stderr, "VERIFY> %s frame %llu mc %llu sp %04x\n", h->name, (unsigned long long)GRID_FRAME(gb->cycles), (unsigned long long)gb->mcycles, gb->sp);
   verify_depth = my + 1;
-  if (hook_jmp_depth < 128) { hook_jmp_depth++; if (setjmp(hook_jmp[hook_jmp_depth - 1]) == 0) h->fn(gb); hook_jmp_depth--; } else h->fn(gb);
+  if (hook_jmp_depth < 128) { hook_jmp_depth++; if (setjmp(jmps()[hook_jmp_depth - 1]) == 0) h->fn(gb); hook_jmp_depth--; } else h->fn(gb);
   verify_depth = my;
   uint64_t cyc_c = gb->mcycles - c0;
   // only calls that ran to their `ret` without an interrupt are comparable: the original code is
@@ -337,7 +349,7 @@ bool hook_dispatch(GB *gb) {
   int depth0 = depth;
   depth++;
   if (hook_shadow) shadow(gb, h);
-  else if (hook_jmp_depth < 128) { hook_jmp_depth++; if (setjmp(hook_jmp[hook_jmp_depth - 1]) == 0) h->fn(gb); hook_jmp_depth--; } else h->fn(gb);
+  else if (hook_jmp_depth < 128) { hook_jmp_depth++; if (setjmp(jmps()[hook_jmp_depth - 1]) == 0) h->fn(gb); hook_jmp_depth--; } else h->fn(gb);
   depth = depth0;
   if (hooklog) fprintf(stderr, "HOOK< %s mc %llu frame %llu sp %04x pc %04x ime %d\n", h->name, (unsigned long long)gb->mcycles, (unsigned long long)GRID_FRAME(gb->cycles), gb->sp, gb->pc, gb->ime);
   return true;
@@ -382,6 +394,22 @@ void asm_call(GB *gb, uint16_t target, uint16_t ret_addr) {
   }
   depth++;
   if (hooklog) fprintf(stderr, "ASM< %04x mc %llu sp %04x ime %d\n", target, (unsigned long long)gb->mcycles, gb->sp, gb->ime);
+}
+
+// For CALL_C_ when the callee is not that C: a callee that returns from its caller (pop, ret) comes
+// back here, so the C caller unwinds through hook_continue as it does after the callee's C. A handoff
+// would resume at the caller's return address, which the native build has no code for.
+void asm_call_c(GB *gb, uint16_t target, uint16_t ret_addr) {
+  uint16_t sp0 = gb->sp;
+  uint32_t sl0 = gb->sp_loads;
+  gb->pc = target;
+  depth--;
+  while (!(gb->pc == ret_addr && gb->sp == (uint16_t)(sp0 + 2)) && !gb->hung) {
+    if (hook_mode == HOOK_MODE_VERIFY && gb->sp_loads != sl0) { depth++; hook_handoff(gb, gb->pc); }
+    if ((uint16_t)(gb->sp - sp0) > 2 && (uint16_t)(gb->sp - sp0) < 0x8000) break;
+    gb->step(gb);
+  }
+  depth++;
 }
 
 void hook_continue(GB *gb, uint16_t pc, uint16_t sp0) {

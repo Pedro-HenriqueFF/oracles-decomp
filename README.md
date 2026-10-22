@@ -5,7 +5,8 @@ Native macOS, Windows, Linux and Android versions of **Oracle of Ages** and **Or
 run as native programs, which is what makes widescreen, save states and save sync across your
 devices possible.
 
-**No game data is included.** You need your own Oracle of Ages and/or Oracle of Seasons (USA) ROM.
+**No game data is included.** You need your own Oracle of Ages and/or Oracle of Seasons ROM (USA or
+Europe).
 The app reads it once, keeps the graphics, sound and data, and never needs it again.
 
 ## Quality-of-life improvements
@@ -59,8 +60,13 @@ The ROM can be a plain `.gbc`/`.gb` file **or a `.zip` or `.gz`** holding one, s
 downloaded archive works as it came. From a zip the `.gbc`/`.gb` file inside is taken, otherwise the
 largest one. `.7z` isn't read — extract it first.
 
-Your ROM has to be the USA release of either game; the app checks it and says so if it isn't. On
-Android, copy the ROM to the phone's Downloads first so the picker can reach it.
+Your ROM has to be the USA or the European release of either game; the app checks it and says so if
+it isn't. The European ROMs play in English, French, German, Italian or Spanish: the game asks the
+first time it starts, and B on the file menu brings the language screen back. Each ROM keeps its own
+saves and save states, so a game's USA and European files never mix; adding the other release of a
+game makes it the one that tab starts, and adding the first one again switches back, its saves
+where you left them. On Android, copy the ROM to the phone's Downloads first so the picker can reach
+it.
 
 ## Playing
 
@@ -92,13 +98,18 @@ Settings > CONTROLS: pick a row, then press the key or controller button (trigge
 want for it. Quick swap and the item buttons only do something once their gameplay toggles are on.
 The window resizes in whole-pixel steps.
 
+The status bar, the item boxes and the menu hints name the key or controller button each action is
+bound to, and switch between keyboard and controller as you use them. Settings > Pad button names
+picks how a controller's buttons are named: Auto follows the connected pad (Xbox for anything it
+doesn't recognise), or choose Nintendo (the Game Boy's own B and A), Xbox or PlayStation.
+
 ### Settings
 
 From the launcher or the pause menu: volume, screen filter (sharp, scanlines, LCD grid, CRT, and the
 two pixel-art scalers XBRZ and HQX, which round off jagged diagonals instead of turning each pixel
 into a square — they are two different algorithms, so it is worth trying both), scale
 (**pixel** for whole-pixel steps, **fill** for the largest size that fits), Game Boy Color colours,
-fullscreen and controls.
+fullscreen, controls and [portable mode](#portable-mode).
 
 There are also quality-of-life toggles, **all off by default**:
 
@@ -106,7 +117,8 @@ There are also quality-of-life toggles, **all off by default**:
 - **Quick swap**: `C` swaps the A and B items
 - **4 slots**: `A`/`S` become two more item buttons — highlight an item in the inventory and press
   one to assign it, then hold it in play to use that item. In widescreen they get their own X and Y
-  boxes at the left of the status bar, so all four items are on screen at once
+  boxes at the left of the status bar, so all four items are on screen at once; without widescreen
+  the boxes go in the black bars either side of the picture when the window is wide enough
 
 ### Save states
 
@@ -180,6 +192,31 @@ per-user folder:
 | Android | the app's own storage (removed when you uninstall) |
 
 Deleting that folder resets the app; you'll be asked for your ROM again.
+
+### Portable mode
+
+To keep everything next to the app instead (on a USB stick or external drive, or shared between
+computers), turn on **Settings → Portable** and choose **Restart** on the message that appears. The
+app writes an empty `portable.txt` beside itself and, from then on, keeps its data in an
+`oracles-data` folder there:
+
+| System | Beside |
+|---|---|
+| macOS | `Oracles.app` (never inside it) |
+| Windows | `Oracles.exe` |
+| Linux | the `.AppImage` file |
+
+Creating `portable.txt` by hand does the same, so a folder holding the app, `portable.txt` and
+`oracles-data` can be copied anywhere as it is.
+
+On the first start in the new place, the app copies your current data across, so your saves come
+with you. It never overwrites: if the folder it switches to already holds data, that data is used as
+it is, and the folder it left stays untouched as a backup. Turning Portable off again goes back to
+the per-user folder, as it was when you left it.
+
+The app needs to be able to write where it sits. On macOS, a freshly downloaded app runs from a
+read-only copy until it has been moved once, so drag it to its final place first. Portable mode
+isn't offered on Android.
 
 ## Reporting problems
 

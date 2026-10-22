@@ -773,7 +773,7 @@ void smasher_updateAngleTowardLink_hook(GB *gb) {
 // @param[out] a direction value
 void smasher_updateDirectionFromAngle_hook(GB *gb) {
   BASE(smasher_updateDirectionFromAngle);
-  uint16_t sp0_ = gb->sp;
+  uint16_t sp0_ = gb->sp; (void)sp0_;
   CYC(b_+0, b_+1); B = A;
   CYC(b_+1, b_+3); alu_and(gb, 0x0f);
   if (F & FZ) { RET_TAKEN(b_+3); return; } // ret z
@@ -852,7 +852,7 @@ void smasher_ball_updateRespawnTimer_hook(GB *gb) {
 
 void smasher_ball_makeLinkDrop_hook(GB *gb) {
   BASE(smasher_ball_makeLinkDrop);
-  uint16_t sp0_ = gb->sp;
+  uint16_t sp0_ = gb->sp; (void)sp0_;
   CYC(b_+0, b_+2); E = ENEMY_BASE + OBJ_STATE;
   CYC(b_+2, b_+3); A = mem_rd(gb, DE);
   CYC(b_+3, b_+5); alu_cp(gb, 0x02);
@@ -913,8 +913,9 @@ commonState:
   CYC(b_+54, b_+55); push_effect(gb, b_+55);
   {
     uint16_t target = smasher_jump_table(gb);
-    if (target == SYM(smasher_state_grabbed)) { smasher_state_uninitialized_hook(gb); return; }
-    if (target == SYM(smasher_state_grabbed__justGrabbed) || target == b_+43 /*unused*/) { smasher_state_stub_hook(gb); return; }
+    if (target == SYM(smasher_state_uninitialized)) { smasher_state_uninitialized_hook(gb); return; }
+    if (target == SYM(smasher_state_grabbed)) { smasher_state_grabbed_hook(gb); return; }
+    if (target == SYM(smasher_state_stub)) { smasher_state_stub_hook(gb); return; }
     HANDOFF(target);
   }
 }

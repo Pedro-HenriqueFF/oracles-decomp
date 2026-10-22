@@ -27,7 +27,9 @@ externs = set()
 extra_names = set()
 alias_labels = set()
 import os as _os
-for extra_path in (['src/hooks/extra_seasons.sym', 'src/hooks/alias_seasons.sym'] if SEASONS else ['src/hooks/extra.sym']):
+EU = _os.path.basename(sys.argv[2]).endswith('_eu.sym')      # a European ROM: the extra labels carried over by tools/eu_sym.py
+# a European ROM also has the entry points tools/eu_gen.py named in its own code (labels_*eu.sym)
+for extra_path in ([f'src/hooks/extra_seasons{"_eu" if EU else ""}.sym', f'src/hooks/alias_seasons{"_eu" if EU else ""}.sym'] if SEASONS else [f'src/hooks/extra{"_eu" if EU else ""}.sym']) + ([f'src/hooks/labels{"_seasons" if SEASONS else ""}_eu.sym'] if EU else []):
     if not _os.path.exists(extra_path): continue
     for line in open(extra_path):
         line = line.split('#')[0].strip()
@@ -35,7 +37,7 @@ for extra_path in (['src/hooks/extra_seasons.sym', 'src/hooks/alias_seasons.sym'
         if not m: continue
         b, a, n = int(m.group(1), 16), int(m.group(2), 16), m.group(3)
         labels.setdefault(n, (b, a)); by_addr.setdefault((b, a), n); instances.setdefault(n, [(b, a)]); extra_names.add(n)
-        if extra_path.endswith('alias_seasons.sym'): alias_labels.add(n)
+        if 'alias_seasons' in extra_path: alias_labels.add(n)
         if m.group(4): relocs.append((a, a + 0x80, int(m.group(4), 16), int(m.group(5), 16)))
         if m.group(6): externs.add((b, a))
 def in_reloc(a): return any(lo <= a < hi for lo, hi, sb, sa in relocs)
@@ -724,9 +726,11 @@ if names and names[0] == '--out':
         for b, a, cn, fl in generated: h.write(f'void {cn}(GB *gb);\n')
         if SEASONS:     # a routine that became a shared hook keeps its s_ name for the hand-written Seasons files
             gen_names = set(cn for b, a, cn, fl in generated)
+            defines = {}
             for (b, a), hook in sorted(shared_hooks.items()):
                 for n in alias_names.get((b, a), []):
-                    if cname(n) not in gen_names: h.write(f'#define {cname(n)} {hook}\n')
+                    if cname(n) not in gen_names: defines[cname(n)] = hook
+            for n, hook in defines.items(): h.write(f'#define {n} {hook}\n')
     with open('src/hooks/generated_seasons_gen.txt' if SEASONS else 'src/hooks/generated.txt', 'w') as g:
         for b, a, cn, fl in generated: g.write(f'{b:02x}:{a:04x} {cn} {fl}\n')
     print(f'{len(generated)} routines in {len(bank_outputs)} bank files' + (f'; {len(pruned)} unreachable entries into shared routines not generated' if pruned else ''))

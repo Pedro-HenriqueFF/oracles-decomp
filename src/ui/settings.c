@@ -18,6 +18,8 @@ void settings_default(Settings *s) {
   s->fast_menus = false;
   s->four_slots = false;
   s->haptics = true;
+  s->pad_style = STYLE_AUTO;
+  s->portable = false;
   bindings_default(&s->bindings);
 }
 
@@ -43,6 +45,9 @@ void settings_parse(Settings *s, const char *text) {
       else if (!strcmp(key, "filter")) {
         for (int i = 0; i < FILTERS; i++) if (!strcmp(value, filter_keys[i])) s->filter = (ScreenFilter)i;
       }
+      else if (!strcmp(key, "controller_style")) {
+        for (int i = 0; i < STYLES; i++) if (!strcmp(value, pad_style_keys[i])) s->pad_style = (PadStyle)i;
+      }
       else if (!strcmp(key, "keys") || !strcmp(key, "pads")) bindings_parse_line(&s->bindings, key, value);
     }
     p = eol ? eol + 1 : NULL;
@@ -50,10 +55,10 @@ void settings_parse(Settings *s, const char *text) {
 }
 
 int settings_format(const Settings *s, char *out, size_t size) {
-  int n = snprintf(out, size, "volume=%d\nfullscreen=%s\nfilter=%s\nscale=%s\nwidescreen=%s\ndim_sides=%s\ngbc_colours=%s\nfast_text=%s\nfast_menus=%s\nquick_swap=%s\nfour_slots=%s\nhaptics=%s\n",
+  int n = snprintf(out, size, "volume=%d\nfullscreen=%s\nfilter=%s\nscale=%s\nwidescreen=%s\ndim_sides=%s\ngbc_colours=%s\nfast_text=%s\nfast_menus=%s\nquick_swap=%s\nfour_slots=%s\nhaptics=%s\ncontroller_style=%s\n",
                    s->volume, s->fullscreen ? "on" : "off", filter_keys[s->filter], s->fill ? "fill" : "pixel", s->widescreen ? "on" : "off", s->dim_sides ? "on" : "off", s->gbc_colours ? "on" : "off",
                    s->fast_text ? "on" : "off", s->fast_menus ? "on" : "off", s->quick_swap ? "on" : "off", s->four_slots ? "on" : "off",
-                   s->haptics ? "on" : "off");
+                   s->haptics ? "on" : "off", pad_style_keys[s->pad_style < STYLES ? s->pad_style : STYLE_AUTO]);
   if (n < (int)size) n += bindings_format(&s->bindings, out + n, size - n);
   return n;
 }
@@ -65,7 +70,7 @@ void settings_menu_open(SettingsMenu *m, bool phone) {
 
 bool settings_row_shown(const SettingsMenu *m, SettingsRow r) {
   if (r == SET_HAPTICS) return m->phone;
-  if (r == SET_FULLSCREEN) return !m->phone;
+  if (r == SET_FULLSCREEN || r == SET_PORTABLE) return !m->phone;
   return true;
 }
 
@@ -99,6 +104,8 @@ MenuAction settings_press(SettingsMenu *m, Settings *s, UiButton b, SettingsRow 
   case SET_QUICK_SWAP: if (dir) s->quick_swap = !s->quick_swap; break;
   case SET_FOUR_SLOTS: if (dir) s->four_slots = !s->four_slots; break;
   case SET_HAPTICS: if (dir) s->haptics = !s->haptics; break;
+  case SET_PAD_STYLE: s->pad_style = (PadStyle)((s->pad_style + dir + STYLES) % STYLES); break;
+  case SET_PORTABLE: if (dir) s->portable = !s->portable; break;
   default: break;
   }
   return MENU_NONE;

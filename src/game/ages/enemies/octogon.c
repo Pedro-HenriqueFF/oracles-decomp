@@ -202,6 +202,8 @@ L_7446:
 
 normalStatus:
   CYC(b_+76, b_+79); push_effect(gb, b_+79); octogon_doJumpTable(gb, sp0_);
+  // octogon_subid2 pops this call's return address and returns to our caller
+  if (gb->pc != b_+79) return;
   CYC(b_+79, b_+80); H = D;
   CYC(b_+80, b_+82); L = ENEMY_BASE + OBJ_VAR34;
   CYC(b_+82, b_+84); E = ENEMY_BASE + OBJ_XH;
@@ -1198,7 +1200,7 @@ void octogon_fixPositionAboveWater_hook(GB *gb) {
   CYC(b_+14, b_+15); L = alu_inc8(gb, L);
   CYC(b_+15, b_+16); C = mem_rd(gb, HL);
   CALL_C(b_+16, octogon_getClosestTargetPositionIndex_hook, SYM(octogon_getClosestTargetPositionIndex), b_+19);
-  CYC(b_+19, b_+20); E = L;
+  CYC(b_+19, b_+20); L = E;
   CYC(b_+20, b_+23); A = mem_rd(gb, w1Link_yh);
   CYC(b_+23, b_+24); B = A;
   CYC(b_+24, b_+27); A = mem_rd(gb, w1Link_xh);
@@ -1319,7 +1321,6 @@ void octogon_getClosestTargetPositionIndex_hook(GB *gb) {
   BASE(octogon_getClosestTargetPositionIndex);
   CYC(b_+0, b_+2); E = 0x00;
 
-checkY:
   CYC(b_+2, b_+3); A = B;
   CYC(b_+3, b_+5); alu_cp(gb, 0x40);
   if (F & FC) { CYCT(b_+5, b_+7); goto checkX; } // jr c

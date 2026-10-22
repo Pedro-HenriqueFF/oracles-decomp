@@ -219,7 +219,6 @@ void goron_targetCarts_configureInventory_hook(GB *gb) {
   if (!(F & FZ)) { CYCT(b_+13, b_+15); goto equipToA; }
   CYC(b_+13, b_+15);
 
-equipToB:
   CYC(b_+15, b_+16); alu_xor(gb, A);
   CYC(b_+16, b_+17); mem_wr(gb, BC, A);
   CYC(b_+17, b_+18); C = alu_inc8(gb, C);
@@ -289,7 +288,7 @@ void goron_targetCarts_loadCrystals_hook(GB *gb) {
 
 L_6848:
   CYC(b_+15, b_+18); mem_wr(gb, wTmpcfc0_genericCutscene_cfd4, A);
-  CYC(b_+18, b_+21); SET_HL((SYM(symmetryNpcSubid8And9Script__repeat_b15) + 4));
+  CYC(b_+18, b_+21); SET_HL(RV((SYM(symmetryNpcSubid8And9Script__repeat_b15) + 4), 0x7866));
   CYC(b_+21, b_+24); TAIL(parseGivenObjectData_b00);
 }
 

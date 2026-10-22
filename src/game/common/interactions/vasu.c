@@ -51,6 +51,22 @@ static void interactionCode89_addAToHl_from_rst(GB *gb, uint16_t return_address)
 // interactionCode89@setScriptAndGotoState4 is reached two ways: falling straight through from
 // @loadLinkedScript with no extra push (so its ret resolves the outer 0x47c8/sp0_ case), and
 // the genuine call just described (so its ret also needs the 0x4954/sp1_ case).
+// the tail after @updateState returns, shared by the top-level path and by a thread that a
+// state-5 link wait parked inside @updateState and resumes on that call's return address
+static void vasu_after_update_state(GB *gb) {
+  BASE(interactionCode89);
+  CYC(b_+19, b_+21); E = INTERACTION_BASE + OBJ_SUBID;
+  CYC(b_+21, b_+22); A = mem_rd(gb, DE);
+  CYC(b_+22, b_+23); alu_or(gb, A);
+  if (!(F & FZ)) { CYCT(b_+23, b_+26); objectSetPriorityRelativeToLink_withTerrainEffects_hook(gb); return; } // jp nz
+  CYC(b_+23, b_+26);
+  CYC(b_+26, b_+29); TAIL(interactionPushLinkAwayAndUpdateDrawPriority); // jp
+}
+
+void interactionCode89__afterCall47c8_hook(GB *gb) {
+  vasu_after_update_state(gb);
+}
+
 void interactionCode89_hook(GB *gb) {
   BASE(interactionCode89);
   uint16_t sp0_ = gb->sp;
@@ -67,12 +83,8 @@ void interactionCode89_hook(GB *gb) {
 afterTextboxSetup:
   CYC(b_+16, b_+19); push_effect(gb, b_+19); goto updateState;
 afterUpdateState:
-  CYC(b_+19, b_+21); E = INTERACTION_BASE + OBJ_SUBID;
-  CYC(b_+21, b_+22); A = mem_rd(gb, DE);
-  CYC(b_+22, b_+23); alu_or(gb, A);
-  if (!(F & FZ)) { CYCT(b_+23, b_+26); objectSetPriorityRelativeToLink_withTerrainEffects_hook(gb); return; } // jp nz
-  CYC(b_+23, b_+26);
-  CYC(b_+26, b_+29); TAIL(interactionPushLinkAwayAndUpdateDrawPriority); // jp
+  vasu_after_update_state(gb);
+  return;
 
 updateState:
   sp1_ = gb->sp;
@@ -285,7 +297,7 @@ state5Substate1:
   CYC(b_+308, b_+310);
   CYC(b_+310, b_+311); alu_xor(gb, A);
   CYC(b_+311, b_+313); mem_wr(gb, 0xff01, A); // R_SB
-  CYC(b_+313, b_+316); SET_HL(GV((SYM(interactionCode67__label_0a_047) + 70), 0x4ad9)); // mainScripts.blueSnakeExitScript_cableNotConnected
+  CYC(b_+313, b_+316); SET_HL(GV(RV((SYM(interactionCode67__label_0a_047) + 70), 0x4ad8), RV(0x4ad9, 0x4adc))); // mainScripts.blueSnakeExitScript_cableNotConnected
   CYC(b_+316, b_+318); B = 0x80;
   CYC(b_+318, b_+320); goto setBlueSnakeExitScript; // jr
 
@@ -333,20 +345,20 @@ state5Substate2:
   CALL_C(b_+381, interactionDecCounter1_hook, SYM(interactionDecCounter1), b_+384);
   if (!(F & FZ)) { RET_TAKEN(b_+384); if (gb->pc == b_+19 && gb->sp == sp0_) goto afterUpdateState; return; } // ret nz
   CYC(b_+384, b_+385);
-  CYC(b_+385, b_+388); SET_HL(GV((SYM(interactionCode67__label_0a_047) + 119), 0x4b0a)); // mainScripts.blueSnakeScript_successfulFortune
+  CYC(b_+385, b_+388); SET_HL(GV(RV((SYM(interactionCode67__label_0a_047) + 119), 0x4b09), RV(0x4b0a, 0x4b0d))); // mainScripts.blueSnakeScript_successfulFortune
   CYC(b_+388, b_+390); goto setBlueSnakeExitScript; // jr
 
 blueSnakeErrorCondition:
-  CYC(b_+390, b_+393); SET_HL(GV((SYM(interactionCode67__label_0a_047) + 67), 0x4ad6)); // mainScripts.blueSnakeScript_doNotRemoveCable
+  CYC(b_+390, b_+393); SET_HL(GV(RV((SYM(interactionCode67__label_0a_047) + 67), 0x4ad5), RV(0x4ad6, 0x4ad9))); // mainScripts.blueSnakeScript_doNotRemoveCable
   CYC(b_+393, b_+394); A = E;
   CYC(b_+394, b_+396); alu_cp(gb, 0x8f);
   if (F & FZ) { CYCT(b_+396, b_+398); goto setBlueSnakeExitScript; } // jr z
   CYC(b_+396, b_+398);
-  CYC(b_+398, b_+401); SET_HL(GV((SYM(interactionCode67__label_0a_047) + 76), 0x4adf)); // mainScripts.blueSnakeExitScript_noValidFile
+  CYC(b_+398, b_+401); SET_HL(GV(RV((SYM(interactionCode67__label_0a_047) + 76), 0x4ade), RV(0x4adf, 0x4ae2))); // mainScripts.blueSnakeExitScript_noValidFile
   CYC(b_+401, b_+403); alu_cp(gb, 0x85);
   if (F & FZ) { CYCT(b_+403, b_+405); goto setBlueSnakeExitScript; } // jr z
   CYC(b_+403, b_+405);
-  CYC(b_+405, b_+408); SET_HL(GV((SYM(interactionCode67__label_0a_047) + 73), 0x4adc)); // mainScripts.blueSnakeExitScript_linkFailed
+  CYC(b_+405, b_+408); SET_HL(GV(RV((SYM(interactionCode67__label_0a_047) + 73), 0x4adb), RV(0x4adc, 0x4adf))); // mainScripts.blueSnakeExitScript_linkFailed
 
 setBlueSnakeExitScript:
   CYC(b_+408, b_+409); alu_xor(gb, A);
@@ -381,7 +393,7 @@ state5Substate4:
   CYC(b_+449, b_+450); alu_or(gb, E);
   if (!(F & FZ)) { CYCT(b_+450, b_+452); goto blueSnakeErrorCondition; } // jr nz
   CYC(b_+450, b_+452);
-  CYC(b_+452, b_+455); SET_HL(GV((SYM(interactionCode67__label_0a_047) + 129), 0x4b14)); // mainScripts.blueSnakeScript_successfulRingTransfer
+  CYC(b_+452, b_+455); SET_HL(GV(RV((SYM(interactionCode67__label_0a_047) + 129), 0x4b13), RV(0x4b14, 0x4b17))); // mainScripts.blueSnakeScript_successfulRingTransfer
   CYC(b_+455, b_+457); goto setBlueSnakeExitScript; // jr
 
 checkRingBoxAndRingsObtained:

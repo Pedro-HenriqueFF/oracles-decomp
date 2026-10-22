@@ -335,6 +335,18 @@ void veranFairy_state0_hook(GB *gb) {
   TAIL(objectSetVisible82);
 }
 
+void veranFairy_state1_strikeLightning_hook(GB *gb) {
+  BASE(veranFairy_state1);
+  uint16_t sp0_ = gb->sp;
+  CALL_C(b_+76, getFreePartSlot_hook, SYM(getFreePartSlot), b_+79);
+  if (!(F & FZ)) { RET_TAKEN(b_+79); return; }
+  CYC(b_+79, b_+80);
+  CYC(b_+80, b_+82); mem_wr(gb, HL, 0x27);
+  CYC(b_+82, b_+84); L = PART_BASE + OBJ_YH;
+  CYC(b_+84, b_+87);
+  TAIL(setShortPosition_paramC);
+}
+
 void veranFairy_state1_hook(GB *gb) {
   BASE(veranFairy_state1);
   uint16_t sp0_ = gb->sp; (void)sp0_;
@@ -394,14 +406,8 @@ strikeLightningAfterCountdown:
   CYC(b_+72, b_+74); mem_wr(gb, HL, 0x0a);
   CYC(b_+74, b_+75); L = E;
   CYC(b_+75, b_+76); mem_wr(gb, HL, alu_inc8(gb, mem_rd(gb, HL)));
-strikeLightning:
-  CALL_C(b_+76, getFreePartSlot_hook, SYM(getFreePartSlot), b_+79);
-  if (!(F & FZ)) { RET_TAKEN(b_+79); return; }
-  CYC(b_+79, b_+80);
-  CYC(b_+80, b_+82); mem_wr(gb, HL, 0x27);
-  CYC(b_+82, b_+84); L = PART_BASE + OBJ_YH;
-  CYC(b_+84, b_+87);
-  TAIL(setShortPosition_paramC);
+  veranFairy_state1_strikeLightning_hook(gb);
+  return;
 substate4:
   CYC(b_+87, b_+89); C = 0x7b;
   CYC(b_+89, b_+91);
@@ -425,8 +431,9 @@ substate8:
   CYC(b_+107, b_+108); L = E;
   CYC(b_+108, b_+109); mem_wr(gb, HL, alu_inc8(gb, mem_rd(gb, HL)));
   CYC(b_+109, b_+111); C = 0x59;
-  CYC(b_+111, b_+114); push_effect(gb, b_+114);
-  goto strikeLightning;
+  CALL_L(b_+111, veranFairy_state1_strikeLightning_hook, b_+114);
+  CYC(b_+114, b_+117);
+  TAIL(fadeoutToWhite);
 substate9:
   CYC(b_+117, b_+119); B = 0x0c;
   CYC(b_+119, b_+122); SET_HL(b_+139);
