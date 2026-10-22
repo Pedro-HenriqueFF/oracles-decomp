@@ -25,3 +25,4 @@ seasons 000c81-000c82       # loadAnimationData@helper with an out-of-table anim
 ages 03c356-03c35e          # smasher's ball released with angle $ff: ecom_getAdjacentWallsBitset reads the sideview table at +$f8, eight bytes into ecom_randomBitwiseAndBCE (issue #14)
 ages 03c41e-03c41f          # ...and ecom_bounceOffScreenBoundary indexes @angleTable (or +$10) with that $ff angle
 ages 03c42e-03c42f
+ages 046705-046706          # partCode35@subidBit7SetArm_state0: a glove-form arm whose subid ends in 2 skips the spawn in state0func_6956, so state0func_6992 reads (hl) with hl still the jump-table target, its own first byte (issue #14, Ramrock)

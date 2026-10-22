@@ -49,14 +49,14 @@ void ramrock_glovePhase_reverseDirection_hook(GB *gb) {
   CYC(b_+5, b_+6); alu_cp(gb, mem_rd(gb, HL));
   if (F & FC) {
     CYCT(b_+6, b_+8);
-    goto applySpeed;
+    goto writeXh;
   }
   CYC(b_+6, b_+8);
   CYC(b_+8, b_+10); A = 0x28;
   CYC(b_+10, b_+11); alu_cp(gb, mem_rd(gb, HL));
   if (F & FC) {
     CYCT(b_+11, b_+13);
-    goto writeXh;
+    goto applySpeed;
   }
   CYC(b_+11, b_+13);
   CYC(b_+13, b_+14); A = alu_inc8(gb, A);
@@ -390,13 +390,13 @@ void ramrock_swordPhase_hook(GB *gb) {
   CYC(b_+3, b_+5); E = ENEMY_BASE + OBJ_VAR35;
   CYC(b_+5, b_+6); A = mem_rd(gb, DE);
   CYC(b_+6, b_+8); alu_cp(gb, 0x03);
-  if (!(F & FC)) {
-    CYCT(b_+8, b_+10);
-    TAIL(ramrock_updateHorizontalMovement);
+  if (F & FC) {
+    CYC(b_+8, b_+10);
+    CYC(b_+10, b_+13); TAIL(ramrock_updateHorizontalMovement);
   }
-  CYC(b_+8, b_+10);
-  CYC(b_+10, b_+13); alu_xor(gb, A);
-  CYC(b_+13, b_+15); mem_wr(gb, DE, A);
+  CYCT(b_+8, b_+10);
+  CYC(b_+13, b_+14); alu_xor(gb, A);
+  CYC(b_+14, b_+15); mem_wr(gb, DE, A);
   CYC(b_+15, b_+18); SET_BC(0x0000);
   CALL_C(b_+18, objectSetSpeedZ_hook, SYM(objectSetSpeedZ), b_+21);
   CALL_C(b_+21, ecom_incState_b10_hook, SYM(ecom_incState_b10), b_+24);
