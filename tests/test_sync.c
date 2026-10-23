@@ -1,6 +1,7 @@
 #include "unit.h"
 #include "sync/sha256.h"
 #include "sync/sync.h"
+#include "sync/update.h"
 
 static void sha256_matches_the_standard_vectors(void) {
   char h[65];
@@ -106,6 +107,24 @@ static void failed_syncs_retry_with_backoff(void) {
   ASSERT(!sync_retry_due(&r, 1000000));
 }
 
+static void versions_compare_and_tags_parse(void) {
+  ASSERT(update_compare("v1.0.0", "") > 0);                     // a build without a version is offered any release
+  ASSERT(update_compare("v1.0.0", "1.0.0") == 0);
+  ASSERT(update_compare("v1.0", "1.0.0") == 0);
+  ASSERT(update_compare("v1.0.1", "1.0.0") > 0);
+  ASSERT(update_compare("v1.10.0", "1.9.3") > 0);               // numbers, not text
+  ASSERT(update_compare("v0.9.0", "1.0.0") < 0);
+  char tag[32];
+  ASSERT(update_parse_latest("{\"url\": \"x\", \"tag_name\": \"v1.2.0\", \"name\": \"Oracles 1.2.0\"}", tag, sizeof tag));
+  ASSERT(!strcmp(tag, "v1.2.0"));
+  ASSERT(update_parse_latest("{\"tag_name\":\"v1.3.0\"}", tag, sizeof tag));
+  ASSERT(!strcmp(tag, "v1.3.0"));
+  ASSERT(!update_parse_latest("{\"message\": \"Not Found\"}", tag, sizeof tag));
+  ASSERT(!update_parse_latest("{\"tag_name\": \"v1/../x\"}", tag, sizeof tag));   // it goes into a URL
+  ASSERT(!update_parse_latest("{\"tag_name\": \"v1.0.0", tag, sizeof tag));
+  ASSERT(!update_parse_latest("{\"tag_name\": \"v1.0.0-much-too-long-for-the-buffer\"}", tag, 8));
+}
+
 int main(void) {
   RUN(sha256_matches_the_standard_vectors);
   RUN(decide_covers_every_case);
@@ -113,5 +132,6 @@ int main(void) {
   RUN(manifest_and_records_parse);
   RUN(codes_normalize);
   RUN(failed_syncs_retry_with_backoff);
+  RUN(versions_compare_and_tags_parse);
   return 0;
 }

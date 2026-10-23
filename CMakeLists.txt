@@ -26,6 +26,13 @@ endif()
 option(ORACLES_SDL_VENDORED "Build SDL3 from source and link it statically" OFF)
 # The save-sync server the app uses until the player sets another in sync.ini
 set(ORACLES_SYNC_URL "https://oracles.decomps-sync.top" CACHE STRING "Default sync server URL")
+# The release this build is (the release workflow passes VERSION's 1.2.0; a leading v is dropped).
+# Only a build with a version asks ORACLES_RELEASES for a newer one: a local build has none and
+# never checks.
+set(ORACLES_VERSION "" CACHE STRING "Release version; empty for a local build")
+set(ORACLES_RELEASES "kirby-letsgo/oracles-decomp" CACHE STRING "GitHub repository whose latest release the app offers")
+string(REGEX REPLACE "^v" "" ORACLES_VERSION_NUMBER "${ORACLES_VERSION}")
+set(ORACLES_APP_DEFS ORACLES_NATIVE=1 ORACLES_SYNC_URL="${ORACLES_SYNC_URL}" ORACLES_VERSION="${ORACLES_VERSION_NUMBER}" ORACLES_RELEASES="${ORACLES_RELEASES}")
 
 macro(oracles_fetch_sdl)
   include(FetchContent)
@@ -90,25 +97,30 @@ if(ORACLES_SDL)
   # oraclesui is not named here: oraclesmods and oraclesgui link it PUBLIC, so naming it again makes
   # the linker warn about a duplicate library.
   target_link_libraries(oracles-native oraclesnative oraclesgui oraclessync oracleswide oraclesmods ${ORACLES_SDL_TARGET})
-  target_compile_definitions(oracles-native PRIVATE ORACLES_NATIVE=1 ORACLES_SYNC_URL="${ORACLES_SYNC_URL}")
+  target_compile_definitions(oracles-native PRIVATE ${ORACLES_APP_DEFS})
   if(WIN32)
     enable_language(RC)
     target_sources(oracles-native PRIVATE icon/oracles.rc)
     set_target_properties(oracles-native PROPERTIES WIN32_EXECUTABLE TRUE OUTPUT_NAME Oracles)
   endif()
   if(APPLE)
+    if(ORACLES_VERSION_NUMBER)
+      set(ORACLES_BUNDLE_VERSION "${ORACLES_VERSION_NUMBER}")
+    else()
+      set(ORACLES_BUNDLE_VERSION "0.0.0")
+    endif()
     set(ORACLES_ICNS ${CMAKE_SOURCE_DIR}/icon/Oracles.icns)
     set_source_files_properties(${ORACLES_ICNS} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
     add_executable(oracles-native-app MACOSX_BUNDLE src/platform/app.c src/platform/window.c src/platform/sync_client.c src/platform/haptic.c ${ORACLES_ICNS})
     target_link_libraries(oracles-native-app oraclesnative oraclesgui oraclessync oracleswide oraclesmods ${ORACLES_SDL_TARGET})
-    target_compile_definitions(oracles-native-app PRIVATE ORACLES_NATIVE=1 ORACLES_SYNC_URL="${ORACLES_SYNC_URL}")
+    target_compile_definitions(oracles-native-app PRIVATE ${ORACLES_APP_DEFS})
     set_target_properties(oracles-native-app PROPERTIES
       OUTPUT_NAME "Oracles"
       MACOSX_BUNDLE_BUNDLE_NAME "Oracles"
       MACOSX_BUNDLE_ICON_FILE "Oracles.icns"
       MACOSX_BUNDLE_GUI_IDENTIFIER "dev.oracles-decomp.oracles"
-      MACOSX_BUNDLE_BUNDLE_VERSION "0.5"
-      MACOSX_BUNDLE_SHORT_VERSION_STRING "0.5")
+      MACOSX_BUNDLE_BUNDLE_VERSION "${ORACLES_BUNDLE_VERSION}"
+      MACOSX_BUNDLE_SHORT_VERSION_STRING "${ORACLES_BUNDLE_VERSION}")
   endif()
 endif()
 
@@ -126,7 +138,7 @@ target_include_directories(oraclesitem PUBLIC src)
 add_library(oracleswide STATIC src/wide/wide.c src/wide/room.c src/wide/hud.c src/wide/npcs.c)
 target_include_directories(oracleswide PUBLIC src)
 target_link_libraries(oracleswide PUBLIC oraclesitem)
-add_library(oraclessync STATIC src/sync/sha256.c src/sync/sync.c src/sync/http_common.c)
+add_library(oraclessync STATIC src/sync/sha256.c src/sync/sync.c src/sync/http_common.c src/sync/update.c)
 target_include_directories(oraclessync PUBLIC src)
 if(WIN32)
   target_sources(oraclessync PRIVATE src/sync/http_winhttp.c)
@@ -185,7 +197,7 @@ if(ANDROID)
   target_link_libraries(oraclessync PUBLIC ${ORACLES_SDL_TARGET})
   target_link_libraries(oraclesgui PUBLIC ${ORACLES_SDL_TARGET})
   target_link_libraries(main oraclesnative oraclesgui oraclessync oracleswide oraclesmods ${ORACLES_SDL_TARGET} log)
-  target_compile_definitions(main PRIVATE ORACLES_NATIVE=1 ORACLES_SYNC_URL="${ORACLES_SYNC_URL}")
+  target_compile_definitions(main PRIVATE ${ORACLES_APP_DEFS})
   set_target_properties(main PROPERTIES LINKER_LANGUAGE CXX)
   return()
 endif()

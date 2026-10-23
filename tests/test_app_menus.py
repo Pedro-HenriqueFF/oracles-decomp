@@ -3,7 +3,8 @@
 cache: install the ROM, boot into file 1, pause, save to slot 1, resume, pause, load slot 1, open
 Settings from the pause menu, lower the volume and bind A to the S key, quit to the launcher (which writes the auto
 state), quit the app; then save slot 1 again with the touch overlay and a tap on the slot's row; then
-play by taps alone: pause, Save state, slot 2, Quit to menu, and start the game from slot 2 on the main menu.
+play by taps alone: pause, Save state, slot 2, Quit to menu, and start the game from slot 2 on the main menu;
+then, with a newer release out, the download link from the main menu's notice and Settings > Version.
 Haptic ticks (ORACLES_TEST_HAPTICS logs them): one per control pressed and menu tap, none for keys,
 none once settings.ini turns them off.
 usage: test_app_menus.py ORACLES_NATIVE ROM   (exit 77 when the ROM is missing)"""
@@ -68,4 +69,12 @@ with tempfile.TemporaryDirectory() as cache:
     assert 'test tap: no' not in r.stderr, r.stderr
     assert 'haptic' not in r.stderr, f'ticks with haptics=off; stderr: {r.stderr}'
     assert 'haptics=off' in open(os.path.join(cache, 'settings.ini')).read()
+    # a newer release (ORACLES_TEST_LATEST stands in for GitHub's answer): the main menu's notice
+    # and the last settings row both give the download link, printed instead of opened
+    keys = '100:^Update,130:Right,140:Down,150:Up,160:X,190:Z,200:Z'
+    r = subprocess.run([app, '--cache', cache], env=dict(env, ORACLES_TOUCH='1', ORACLES_TEST_KEYS=keys, ORACLES_TEST_LATEST='v9.0.0'), capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stderr
+    assert 'test tap: no' not in r.stderr, r.stderr
+    link = 'open https://github.com/kirby-letsgo/oracles-decomp/releases/download/v9.0.0/Oracles-'
+    assert r.stderr.count(link) == 2, f'expected the notice and the Version row to open the download; stderr: {r.stderr}'
 print('ok app_menus')

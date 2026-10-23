@@ -9,7 +9,7 @@
 void http_add_header(HttpResponse *res, const char *line, size_t len);
 
 enum {
-  OPT_WRITEDATA = 10001, OPT_URL = 10002, OPT_POSTFIELDS = 10015, OPT_HTTPHEADER = 10023,
+  OPT_WRITEDATA = 10001, OPT_URL = 10002, OPT_POSTFIELDS = 10015, OPT_HTTPHEADER = 10023, OPT_USERAGENT = 10018,
   OPT_HEADERDATA = 10029, OPT_CUSTOMREQUEST = 10036, OPT_WRITEFUNCTION = 20011,
   OPT_HEADERFUNCTION = 20079, OPT_POSTFIELDSIZE_LARGE = 30120, OPT_TIMEOUT = 13, OPT_NOSIGNAL = 99,
   OPT_FOLLOWLOCATION = 52, INFO_RESPONSE_CODE = 0x200002,
@@ -81,6 +81,7 @@ bool http_request(const char *method, const char *url, const char *headers, cons
   }
   curl.easy_setopt(c, OPT_URL, url);
   curl.easy_setopt(c, OPT_CUSTOMREQUEST, method);
+  curl.easy_setopt(c, OPT_USERAGENT, "Oracles");
   curl.easy_setopt(c, OPT_NOSIGNAL, 1L);
   curl.easy_setopt(c, OPT_TIMEOUT, 30L);
   curl.easy_setopt(c, OPT_FOLLOWLOCATION, 1L);

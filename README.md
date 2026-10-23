@@ -37,9 +37,8 @@ If you don't want to use it for that I completely understand.
 
 ## Download
 
-Get the latest build for your system from the
-[**nightly release**](https://github.com/kirby-letsgo/oracles-decomp/releases/tag/nightly), rebuilt
-automatically on every change:
+Get the build for your system from the
+[**latest release**](https://github.com/kirby-letsgo/oracles-decomp/releases/latest):
 
 | System | File | First launch |
 |---|---|---|
@@ -49,6 +48,9 @@ automatically on every change:
 | Android 8+ (arm64) | `Oracles-android.apk` | Install the APK (allow installs from your browser or file manager). |
 
 Each desktop download is a single self-contained file; nothing else needs installing.
+
+When a newer version is out, the main menu shows it with a **Download** link to your system's file,
+and **Settings → Version** has the same link. The version you have is on that row too.
 
 ## Adding your ROM
 

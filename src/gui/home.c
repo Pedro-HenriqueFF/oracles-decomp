@@ -100,6 +100,10 @@ int gui_home(Home *h, const GuiTheme *t, const GuiFrame *f, SettingsMenu *sm, co
       else if (h->files_page) files_page(h, t, &button);
       else game_rows(h, t, &button);
     }
+    if (s->update[0] && !h->l.settings_tab &&
+        tap_row(t, (Row){.id = CLAY_ID("Update"), .label = gui_str("Version %s", s->update), .tag = CLAY_STRING("New"),
+                         .value = CLAY_STRING("Download  >"), .enabled = true}))
+      button = GUI_UPDATE;
     const char *hint = h->l.settings_tab ? hint_of(f, "change", "back") : gui_str("%s play   Left/Right switch game   %s quit", hint_ok(f), hint_back(f)).chars;
     hint_line(t, f, hint);
   }

@@ -35,11 +35,22 @@
 #include "gui/screens.h"
 #include "platform/sync_client.h"
 #include "platform/haptic.h"
+#include "sync/update.h"
 
 #ifdef __ANDROID__
 #define ON_PHONE true           // the settings show Vibration and leave out Fullscreen
 #else
 #define ON_PHONE false
+#endif
+// what the update notice downloads: this system's file in the release
+#if defined(__ANDROID__)
+#define RELEASE_ASSET "Oracles-android.apk"
+#elif defined(_WIN32)
+#define RELEASE_ASSET "Oracles-windows-x64.zip"
+#elif defined(__APPLE__)
+#define RELEASE_ASSET "Oracles-macOS.dmg"
+#else
+#define RELEASE_ASSET "Oracles-linux-x86_64.AppImage"
 #endif
 #include "wide/wide.h"
 #include "wide/hud.h"
@@ -1214,6 +1225,42 @@ static bool run_controls(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, c
 
 static bool run_sync(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, const uint8_t *game_rgb);
 
+// A newer release, looked for once at start by a thread. ORACLES_TEST_LATEST=v9.0.0 stands in for
+// GitHub's answer (even on a build without a version), and the download link is printed, not opened.
+static char update_tag[16];
+static SDL_AtomicInt update_found;
+
+static int SDLCALL update_thread(void *data) {
+  (void)data;
+  if (update_check(ORACLES_RELEASES, ORACLES_VERSION, update_tag, sizeof update_tag)) SDL_SetAtomicInt(&update_found, 1);
+  return 0;
+}
+
+static void update_start(void) {
+  const char *fake = getenv("ORACLES_TEST_LATEST");
+  if (fake) {
+    snprintf(update_tag, sizeof update_tag, "%s", fake);
+    if (update_compare(update_tag, ORACLES_VERSION) > 0) SDL_SetAtomicInt(&update_found, 1);
+  } else if (ORACLES_VERSION[0]) SDL_DetachThread(SDL_CreateThread(update_thread, "update", NULL));
+}
+
+// The Version row's values, and the notice once the thread has found a release.
+static void update_show(void) {
+  snprintf(settings.version, sizeof settings.version, "%s", ORACLES_VERSION[0] ? ORACLES_VERSION : "dev");
+  if (SDL_GetAtomicInt(&update_found)) snprintf(settings.update, sizeof settings.update, "%s", update_tag + (update_tag[0] == 'v'));
+}
+
+static void update_poll(void) {
+  if (!settings.update[0] && SDL_GetAtomicInt(&update_found)) update_show();
+}
+
+static void update_open(void) {
+  char url[256];
+  snprintf(url, sizeof url, "https://github.com/%s/releases/download/%s/%s", ORACLES_RELEASES, update_tag, RELEASE_ASSET);
+  if (getenv("ORACLES_TEST_LATEST")) fprintf(stderr, "open %s\n", url);
+  else if (!SDL_OpenURL(url)) fprintf(stderr, "could not open %s: %s\n", url, SDL_GetError());
+}
+
 static struct { SettingsMenu *menu; GuiSettingsTap tap; bool back; } settings_ui;
 static void settings_layer(const GuiFrame *f) { settings_ui.back = gui_settings(settings_ui.menu, &settings, settings.sync_label, &gui_t, f, &settings_ui.tap); }
 
@@ -1229,6 +1276,7 @@ static bool run_settings_page(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *t
   settings_ui.menu = &m;
   for (;;) {
     test_keys();
+    update_poll();
     SDL_Event ev;
     while (poll_event(&ev)) {
       if (ev.type == SDL_EVENT_QUIT) return false;
@@ -1242,6 +1290,7 @@ static bool run_settings_page(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *t
       if (a == MENU_BACK) { settings_store(); return true; }
       if (a == MENU_PICK && row == SET_CONTROLS && !run_controls(win, ren, tex, game_rgb)) return false;
       if (a == MENU_PICK && row == SET_SYNC && !run_sync(win, ren, tex, game_rgb)) return false;
+      if (a == MENU_PICK && row == SET_VERSION) update_open();
       if (settings.fullscreen != was_full) apply_window_settings(win);
       if (settings.widescreen != was_wide) fit_window_to_picture(win);
       if (audio) SDL_SetAudioStreamGain(audio, volume_gain(false));
@@ -1284,6 +1333,7 @@ static void settings_reload(SDL_Window *win) {
   char *z = text ? realloc(text, n + 1) : NULL;
   if (z) { z[n] = 0; settings_parse(&settings, z); free(z); } else free(text);
   sync_label_update();
+  update_show();
   settings.portable = portable_marked();
   apply_window_settings(win);
   apply_game_settings();
@@ -1544,6 +1594,7 @@ static bool run_home(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, const
       home_scan(&h, cache);
     }
     if (sync_cfg.code[0] && sync_should_retry()) sync_start(&sync_cfg, cache, SYNC_ALL_GAMES);
+    update_poll();
     SDL_Event ev;
     while (poll_event(&ev)) {
       if (ev.type == SDL_EVENT_QUIT) return false;
@@ -1563,6 +1614,7 @@ static bool run_home(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, const
           if (!run_sync(win, ren, tex, NULL)) return false;
           home_scan(&h, cache);
         }
+        if (sa == MENU_PICK && row == SET_VERSION) update_open();
         if (settings.fullscreen != was_full) apply_window_settings(win);
         if (settings.widescreen != was_wide) fit_window_to_picture(win);
         apply_game_settings();
@@ -1593,7 +1645,8 @@ static bool run_home(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, const
     home_ui.button = GUI_NONE;
     home_ui.tap.row = home_ui.tap.volume = GUI_NONE;
     present(ren, tex, rgb);
-    if (home_ui.button >= 0) push_button(home_ui.button);
+    if (home_ui.button == GUI_UPDATE) update_open();
+    else if (home_ui.button >= 0) push_button(home_ui.button);
     else push_settings_tap(&home_ui.tap);
     oracles_frame_wait();
   }
@@ -2102,6 +2155,7 @@ int main(int argc, char **argv) {
   snprintf(app_cache, sizeof app_cache, "%s", cache);
   sync_config_load(&sync_cfg, cache);
   settings_reload(win);
+  update_start();
   if (settings.widescreen && !file_exists(window_size)) fit_window_to_picture(win);
 
   // a ROM or --game on the command line starts that game directly; quitting it opens the launcher

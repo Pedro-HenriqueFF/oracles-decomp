@@ -214,7 +214,13 @@ static void settings_menu_changes_values(void) {
   settings_press(&m, &s, UI_UP, &row);
   settings_press(&m, &s, UI_UP, &row);
   settings_press(&m, &s, UI_UP, &row);
-  ASSERT_EQ(m.sel, SET_PORTABLE);                       // the last row
+  ASSERT_EQ(m.sel, SET_VERSION);                        // the last row
+  ASSERT_EQ(settings_press(&m, &s, UI_ACCEPT, &row), MENU_NONE);   // nothing to download
+  snprintf(s.update, sizeof s.update, "1.1.0");
+  ASSERT_EQ(settings_press(&m, &s, UI_ACCEPT, &row), MENU_PICK);
+  ASSERT_EQ(row, SET_VERSION);
+  settings_press(&m, &s, UI_UP, &row);
+  ASSERT_EQ(m.sel, SET_PORTABLE);
   ASSERT_EQ(settings_press(&m, &s, UI_ACCEPT, &row), MENU_NONE);
   ASSERT(s.portable);
   settings_press(&m, &s, UI_UP, &row);

@@ -1,9 +1,12 @@
 name: release
-# Builds the app for macOS, Windows, Linux and Android on every push to main and replaces the
-# assets of the rolling "nightly" pre-release with them.
+# A change to VERSION reaching main (merging the PR that bumps it) builds the app for macOS, Windows,
+# Linux and Android with that version and publishes them as the release v1.2.0, "Oracles 1.2.0",
+# which becomes the latest: the apps' update check asks GitHub for it. When that release exists
+# already, or the run was started by hand on a branch, it only builds (no version, nothing published).
 on:
   push:
     branches: [main]
+    paths: [VERSION]
   workflow_dispatch:
 
 concurrency:
@@ -11,14 +14,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      publish: ${{ steps.v.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v=$(tr -d ' \r\n' < VERSION)
+          if ! [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "::error::VERSION must be MAJOR.MINOR.PATCH, not '$v'"; exit 1; fi
+          publish=false
+          if [ "$GITHUB_REF" = refs/heads/main ] && ! gh release view "v$v" > /dev/null 2>&1; then publish=true; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "version $v, publish $publish"
+
   macos:
     runs-on: macos-14
+    needs: version
+    env:
+      ORACLES_VERSION: ${{ needs.version.outputs.publish == 'true' && needs.version.outputs.version || '' }}
     steps:
       - uses: actions/checkout@v5
       - run: brew install ninja
       - name: Build (universal)
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DORACLES_SDL_VENDORED=ON \
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DORACLES_SDL_VENDORED=ON -DORACLES_VERSION="$ORACLES_VERSION" \
             -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
           cmake --build build --target oracles-native-app test_ui
           ./build/test_ui
@@ -31,12 +56,15 @@ jobs:
 
   windows:
     runs-on: ubuntu-24.04
+    needs: version
+    env:
+      ORACLES_VERSION: ${{ needs.version.outputs.publish == 'true' && needs.version.outputs.version || '' }}
     steps:
       - uses: actions/checkout@v5
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mingw-w64 ninja-build cmake
       - name: Build (x64, MinGW-w64)
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DORACLES_SDL_VENDORED=ON \
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DORACLES_SDL_VENDORED=ON -DORACLES_VERSION="$ORACLES_VERSION" \
             -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x86_64.cmake
           cmake --build build --target oracles-native
       - name: Package
@@ -48,12 +76,15 @@ jobs:
 
   linux:
     runs-on: ubuntu-22.04
+    needs: version
+    env:
+      ORACLES_VERSION: ${{ needs.version.outputs.publish == 'true' && needs.version.outputs.version || '' }}
     steps:
       - uses: actions/checkout@v5
       - run: tools/linux_deps.sh
       - name: Build (x86_64)
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DORACLES_SDL_VENDORED=ON
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DORACLES_SDL_VENDORED=ON -DORACLES_VERSION="$ORACLES_VERSION"
           cmake --build build --target oracles-native test_ui
           ./build/test_ui
       - name: Package (AppImage)
@@ -73,6 +104,9 @@ jobs:
 
   android:
     runs-on: ubuntu-24.04
+    needs: version
+    env:
+      ORACLES_VERSION: ${{ needs.version.outputs.publish == 'true' && needs.version.outputs.version || '' }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-java@v5
@@ -101,8 +135,9 @@ jobs:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
           ORACLES_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ORACLES_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          # this workflow's run number: it went up with every nightly too, so a release always
+          # installs over whatever APK a phone has (Android refuses a lower versionCode)
           ORACLES_VERSION_CODE: ${{ github.run_number }}
-          ORACLES_VERSION_NAME: nightly-${{ github.run_number }}
         working-directory: android
         run: |
           echo "sdk.dir=$ANDROID_HOME" > local.properties
@@ -120,24 +155,23 @@ jobs:
         with: { name: android, path: Oracles-android.apk }
 
   publish:
-    needs: [macos, windows, linux, android]
+    if: needs.version.outputs.publish == 'true'
+    needs: [version, macos, windows, linux, android]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v5
+        with: { fetch-depth: 0 }
       - uses: actions/download-artifact@v8
         with: { path: dist, merge-multiple: true }
-      - name: Replace the nightly release
+      - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           ls -la dist
-          git tag -f nightly
-          git push -f origin nightly
           cat > notes.md <<EOF
-          Rolling build of \`main\` at ${GITHUB_SHA::7} ($(date -u +%Y-%m-%d)).
-
           You need your own ROMs: The Legend of Zelda: Oracle of Ages and/or Oracle of Seasons (USA).
           The app opens on its launcher; ADD ROM there asks for one (a .zip or .gz is fine). It keeps
           the graphics, sound and data and never needs the ROM again.
@@ -146,6 +180,12 @@ jobs:
           - **Windows** (64-bit): unzip and run Oracles.exe (SmartScreen: More info > Run anyway).
           - **Linux** (x86_64): \`chmod +x Oracles-linux-x86_64.AppImage\` and run it.
           - **Android** (8+, arm64): install the APK (allow installs from your browser or file manager).
+
+          The app's main menu says when a newer version is out and links its download.
           EOF
-          gh release delete nightly --yes || true
-          gh release create nightly dist/* --prerelease --title "Nightly" --notes-file notes.md --target "$GITHUB_SHA"
+          prev=$(git describe --tags --abbrev=0 --match 'v*' HEAD 2>/dev/null || true)
+          if [ -n "$prev" ]; then
+            printf '\n## Changes since %s\n\n' "$prev" >> notes.md
+            git log --no-merges --format='- %s' "$prev..HEAD" >> notes.md
+          fi
+          gh release create "v$VERSION" dist/* --target "$GITHUB_SHA" --latest --title "Oracles $VERSION" --notes-file notes.md
