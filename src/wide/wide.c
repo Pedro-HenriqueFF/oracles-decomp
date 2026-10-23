@@ -32,7 +32,7 @@ static uint8_t rd(const GBSample *s, uint16_t a) {
   return s->wram[0][a - 0xc000];
 }
 
-// When the strips show rooms: the status bar split on, no menu open (the game-over screen is not
+// When the strips show rooms: the status bar split on and drawn, no menu open (the game-over screen is not
 // opened as a menu, so it has its own flag), and either normal play (scroll mode 1; bit 7 means the camera is moving) or a scrolling screen
 // transition (states 3-5), during which wActiveRoom is already the next room while the scroll and
 // wScreenOffsetX/Y still count from the previous one. Scroll mode 0 is a scripted scene. Scroll
@@ -65,6 +65,15 @@ static int lcd_split(const GBSample *s, const GameRam *r) {
   return split < 2 ? rd(s, r->next_lcd_behaviour) : split;
 }
 
+// Scenes drawn over the whole screen (Ages' ending and credits, Seasons' opening) keep the split
+// behaviour but set wGfxRegsFinal.LYC past the last line, so LCDC never switches at the bar's end.
+// A lit frame shows whether it switched; a blank one only has the LYC the next frame will get.
+enum { W_GFX_REGS_FINAL_LYC = 0xc49c };
+static bool whole_screen(const GBSample *s) {
+  if (s->line_lcdc[0] & 0x80) return s->line_lcdc[0] == s->line_lcdc[STATUS_BAR_LINES];
+  return rd(s, W_GFX_REGS_FINAL_LYC) >= FB_H;
+}
+
 // Whether the game has already moved wActiveRoom one grid step (dx, dy) on from wLoadingRoom, the
 // room on screen: on the overworld's grid the next room number, in a dungeon the room the step
 // left behind on the floor's layout. Rooms that load another room's layout (Seasons' Temple
@@ -81,7 +90,7 @@ static bool stepped_on(const GBSample *s, const GameRam *r, int dx, int dy) {
 static View view_of(const GBSample *s, const GameRam *r) {
   View v = {false, false, 0, 0, false, 0, 0};
   int split = lcd_split(s, r), mode = rd(s, W_SCROLL_MODE) & 0x0f;
-  if (!(split == 2 || split == 3) || rd(s, W_OPENED_MENU) || rd(s, r->game_over)) return v;
+  if (!(split == 2 || split == 3) || whole_screen(s) || rd(s, W_OPENED_MENU) || rd(s, r->game_over)) return v;
   int state = rd(s, W_TRANSITION_STATE), dir = rd(s, W_TRANSITION_DIRECTION);
   static const int step[4][2] = {{0, -1}, {1, 0}, {0, 1}, {-1, 0}};  // up, right, down, left
   if (mode == 0x01 || mode == 0x04) {

@@ -475,6 +475,59 @@ static void seasons_map_has_no_status_bar(void) {
   ASSERT_EQ(c.differ, 0);
 }
 
+// Scenes over the whole screen (#14: Ages' ending and credits; here Seasons' opening) keep the
+// status bar's split behaviour with wGfxRegsFinal.LYC past the last line, so the game never draws
+// the bar: no X and Y boxes, no room strips, and the top lines stay the scene's own, blank frames
+// between the scenes included.
+typedef struct { const uint8_t *rom; size_t rom_size; int scenes, blank, wrong, bar; } SceneCheck;
+
+static void scene_cb(GB *gb, const GBSample *s, void *ctx) {
+  (void)gb;
+  SceneCheck *c = ctx;
+  static uint8_t with[WIDE_W * FB_H * 3], without[WIDE_W * FB_H * 3], strip[WIDE_STRIP_W * FB_H * 3];
+  WideOptions on = {true, true, {40, 32, 16}, c->rom, c->rom_size, true, {0x05, 0x06}, NULL, {0}};
+  bool lit = s->line_lcdc[0] & 0x80;
+  if (s->wram[0][0x49c] < FB_H || (lit && s->line_lcdc[0] != s->line_lcdc[16])) {
+    if (wide_slot_strip(s, &on, 0, false, strip)) c->bar++;
+    return;
+  }
+  WideOptions off = on;
+  off.slots = false;
+  wide_render(s, &on, with);
+  wide_render(s, &off, without);
+  c->scenes++;
+  if (!lit) c->blank++;
+  bool differ = false;
+  for (int y = 0; y < 16; y++)
+    if (memcmp(with + ((size_t)y * WIDE_W + WIDE_SIDE) * 3, without + ((size_t)y * WIDE_W + WIDE_SIDE) * 3, FB_W * 3)) differ = true;
+  if (differ || wide_slot_strip(s, &on, 0, false, strip) || wide_room_pixel(s, true, 80, 80) >= 0) c->wrong++;
+}
+
+static void seasons_opening_has_no_status_bar(void) {
+  size_t n;
+  uint8_t *rom = oracles_read_file(GAME_ROM_DIR "/Legend of Zelda, The - Oracle of Seasons (USA, Australia).gbc", &n);
+  if (!rom) SKIP("ROM not present");
+  Tas t;
+  if (!tas_load(&t, TAS_DIR "/seasons-play.inputs")) SKIP("inputs missing");
+  GB *gb = calloc(1, sizeof *gb);
+  gb_init(gb);
+  ASSERT(gb_load_rom(gb, rom, n));
+  gb->cyctab = cyctab_alloc(rom, n);
+  assets_zero_code(rom, n);
+  gb_reset(gb);
+  if (!oracles_load_boot_state(gb, TAS_DIR "/seasons-boot.state")) SKIP("boot state missing");
+  SceneCheck c = {rom, n, 0, 0, 0, 0};
+  gb->input_at = tas_cb; gb->input_ctx = &t;
+  gb->frame_cb = scene_cb; gb->frame_ctx = &c;
+  for (uint64_t i = 0; i < 19000 && !gb->hung; i++) gb_run_frame(gb);
+  printf("  %d scene frames (%d blank), %d drawn as play; %d play frames with the bar\n", c.scenes, c.blank, c.wrong, c.bar);
+  ASSERT(c.scenes > 4000);
+  ASSERT(c.blank > 50);
+  ASSERT_EQ(c.wrong, 0);
+  ASSERT(c.bar > 5000);
+  free(rom);
+}
+
 // Temple Remains once the volcano has erupted (#24): the game loads its lava layouts from rooms past
 // the end of the Subrosia map and takes the tileset from templeRemainsSeasons
 // (data/seasons/tilesets.s: $0f $01, mapping $16, layout group $04, animations $08), so a strip
@@ -594,6 +647,7 @@ int main(void) {
   RUN(item_icons_decode_from_the_rom);
   RUN(seasons_temple_remains_after_the_eruption);
   RUN(seasons_map_has_no_status_bar);
+  RUN(seasons_opening_has_no_status_bar);
   RUN(ages_strips_show_impa_past_the_edge);
   RUN(ages_strips_show_the_neighbours_characters);
   RUN(seasons_neighbours_match_the_rooms);
