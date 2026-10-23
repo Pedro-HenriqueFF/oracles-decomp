@@ -91,6 +91,20 @@ void makuTree_checkLinkedAndUpdateMapText_hook(GB *gb) {
   CYC(b_+11, b_+12); ret_effect(gb);
 }
 
+static void makuTree_getLinkedTextOffset(GB *gb) {
+  BASE(makuTree_modifyTextIndexForLinked);
+  CYC(b_+16, b_+17); H = D;
+  CYC(b_+17, b_+19); L = 0x41;
+  CYC(b_+19, b_+20); A = mem_rd(gb, HL);
+  CYC(b_+20, b_+22); alu_cp(gb, 0x8a);
+  if (!(F & FZ)) { CYCT(b_+22, b_+24); goto subtract; }
+  CYC(b_+22, b_+24);
+  CYC(b_+24, b_+25); A = alu_dec8(gb, A);
+subtract:
+  CYC(b_+25, b_+27); alu_sub(gb, 0x87);
+  CYC(b_+27, b_+28); ret_effect(gb);
+}
+
 void makuTree_modifyTextIndexForLinked_hook(GB *gb) {
   BASE(makuTree_modifyTextIndexForLinked);
   uint16_t sp0_ = gb->sp;
@@ -98,7 +112,7 @@ void makuTree_modifyTextIndexForLinked_hook(GB *gb) {
   CALL_C(b_+1, checkIsLinkedGame_hook, SYM(checkIsLinkedGame), b_+4);
   if (F & FZ) { RET_TAKEN(b_+4); return; }
   CYC(b_+4, b_+5);
-  CYC(b_+5, b_+8); push_effect(gb, b_+8); asm_call(gb, b_+16, b_+8);
+  CYC(b_+5, b_+8); push_effect(gb, b_+8); makuTree_getLinkedTextOffset(gb);
   CYC(b_+8, b_+11); SET_HL(SYM(makuTree_textOffsetsForLinked));
   CYC(b_+11, b_+12); makuTree_add_a_to_hl(gb, b_+12);
   CYC(b_+12, b_+13); A = mem_rd(gb, HL);
