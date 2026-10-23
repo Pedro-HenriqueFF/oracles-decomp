@@ -76,3 +76,30 @@ void features_slot_release(GB *gb, int slot) {
   mem_wr(gb, held_addr, held_prev);
   if (held_refresh) W8(wStatusBarNeedsRefresh) |= 0x01;
 }
+
+static uint8_t rom_at(GB *gb, uint8_t bank, uint16_t addr) {
+  size_t at = (size_t)bank * 0x4000 + (addr & 0x3fff);
+  return at < gb->rom_size ? gb->rom[at] : 0;
+}
+
+void features_treasure_object(GB *gb, uint8_t id, uint8_t subid, uint8_t out[4]) {
+  uint8_t bank = SYMBANK(treasureObjectData);
+  uint16_t at = (uint16_t)(SYM(treasureObjectData) + id * 4);
+  if (rom_at(gb, bank, at) & 0x80) at = (uint16_t)((rom_at(gb, bank, at + 1) | rom_at(gb, bank, at + 2) << 8) + subid * 4);
+  for (int i = 0; i < 4; i++) out[i] = rom_at(gb, bank, (uint16_t)(at + i));
+}
+
+void features_treasure_loaded(GB *gb, uint16_t obj) {
+  if (!features.treasure_swap) return;
+  uint8_t new_id, new_subid, t[4];
+  if (!features.treasure_swap(W8(wActiveGroup), W8(wActiveRoom), mem_rd(gb, (uint16_t)(obj + OBJ_VAR30)),
+                              mem_rd(gb, (uint16_t)(obj + OBJ_VAR03)), &new_id, &new_subid)) return;
+  features_treasure_object(gb, new_id, new_subid, t);
+  mem_wr(gb, (uint16_t)(obj + OBJ_VAR03), new_subid);
+  mem_wr(gb, (uint16_t)(obj + OBJ_VAR30), new_id);
+  mem_wr(gb, (uint16_t)(obj + OBJ_VAR32), t[0] & 0x07);
+  mem_wr(gb, (uint16_t)(obj + OBJ_VAR34), t[1]);
+  mem_wr(gb, (uint16_t)(obj + OBJ_VAR35), t[2]);
+  mem_wr(gb, (uint16_t)(obj + OBJ_SUBID), t[3]);
+  mem_wr(gb, (uint16_t)(obj + OBJ_VAR38), 0);
+}

@@ -1,5 +1,6 @@
 #include "game/game.h"
 #include "game/gen.h"
+#include "game/features.h"
 
 #undef CYC
 #undef CYCT
@@ -55,5 +56,6 @@ void interactionLoadTreasureData_hook(GB *gb) {
   CYC(b_+51, b_+52); A = mem_rd(gb, HL); SET_HL(HL + 1);
   CYC(b_+52, b_+54); E = 0x42;
   CYC(b_+54, b_+55); mem_wr(gb, DE, A);
+  features_treasure_loaded(gb, (uint16_t)(D << 8 | 0x40));
   CYC(b_+55, b_+56); ret_effect(gb);
 }
