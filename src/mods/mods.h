@@ -161,6 +161,7 @@ bool mods_id_valid(const char *id);
 typedef struct {
   const uint8_t *wram;          // $c000..$cfff, 4096 bytes, or NULL
   const uint8_t *wram3;         // $d000..$dfff as WRAM bank 3, 4096 bytes, or NULL
+  const uint8_t *wram1;         // $d000..$dfff as WRAM bank 1 (the objects), 4096 bytes, or NULL
   const uint8_t *hram;          // $ff80..$fffe, 127 bytes, or NULL
   bool seasons;
   int width;                    // the picture's width: 160, or 256 in widescreen
@@ -398,3 +399,13 @@ bool mods_store_get(const char *key, size_t key_len, ModValue *out);
 bool mods_treasure_swap(int group, int room, uint8_t id, uint8_t subid, uint8_t *new_id, uint8_t *new_subid);
 // For api.c: oracles.swap_treasure for the running mod. NULL on success, else why it was refused.
 const char *mods_add_swap(int group, int room, int id, int subid, int new_id, int new_subid);
+
+#define MODS_WRITES_MAX 256
+typedef struct { uint16_t addr; uint8_t value; } ModWrite;
+// For api.c: oracles.wr for the running mod's handler. NULL on success, else why it was refused.
+const char *mods_queue_write(int addr, int value);
+// For the app, between frames: moves up to `cap` of this frame's writes into `out` and empties the
+// queue. A handler that failed left none of its writes in it.
+int mods_take_writes(ModWrite *out, int cap);
+// For api.c: the running mod's declared api, or 0 when no mod's Lua is running.
+int mods_active_api(void);

@@ -178,6 +178,30 @@ const char *mods_add_swap(int group, int room, int id, int subid, int new_id, in
   return NULL;
 }
 
+static ModWrite writes[MODS_WRITES_MAX];
+static int write_count;
+static bool in_handler;
+
+int mods_active_api(void) { return active_mod ? active_mod->api : 0; }
+
+const char *mods_queue_write(int addr, int value) {
+  if (!may_change_game()) return "needs api=2 and changes_game=yes in mod.ini";
+  if (!in_handler) return "only inside on_frame or on_room_change";
+  if (addr < 0xc000 || addr > 0xdfff) return "the address is outside $c000-$dfff";
+  if (addr >= 0xc0b0 && addr <= 0xc2ff) return "$c0b0-$c2ff holds the stacks and thread state";
+  if (value < 0 || value > 255) return "the value is outside 0-255";
+  if (write_count == MODS_WRITES_MAX) return "more than 256 writes this frame";
+  writes[write_count++] = (ModWrite){(uint16_t)addr, (uint8_t)value};
+  return NULL;
+}
+
+int mods_take_writes(ModWrite *out, int cap) {
+  int n = write_count < cap ? write_count : cap;
+  memcpy(out, writes, (size_t)n * sizeof *out);
+  write_count = 0;
+  return n;
+}
+
 bool mods_treasure_swap(int group, int room, uint8_t id, uint8_t subid, uint8_t *new_id, uint8_t *new_subid) {
   for (int i = 0; i < swap_count; i++)
     if (swaps[i].group == group && swaps[i].room == room && swaps[i].id == id && swaps[i].subid == subid) {
@@ -270,8 +294,11 @@ static void call_handler(Mod *m, int ref, bool has_arg, int arg) {
   int argc = 0;
   if (has_arg) { lua_pushinteger(runner, arg); argc = 1; }
   bool exhausted = false, deadline_hit = false;
+  int staged = write_count;
+  in_handler = true;
   int status = mod_resume_budgeted(runner, argc, MOD_FRAME_INSTRUCTION_BUDGET,
                                     MOD_FRAME_WALLCLOCK_DEADLINE_SECONDS, &exhausted, &deadline_hit);
+  in_handler = false;
   if (status != LUA_OK || exhausted) {
     char reason[256];
     if (status == LUA_YIELD || (status == LUA_OK && exhausted)) {
@@ -299,6 +326,7 @@ static void call_handler(Mod *m, int ref, bool has_arg, int arg) {
     snprintf(m->error, sizeof m->error, "%.*s", (int)(sizeof m->error - 1), reason);
     m->enabled = false;
     drop_effects(m->id);
+    write_count = staged;
     void *ud = NULL;
     lua_getallocf(m->L, &ud);
     lua_close(m->L);
@@ -323,6 +351,7 @@ void mods_frame(const ModsFrame *f) {
   overlay_begin(&overlay, f->width);
   bool room_changed = f->room != last_room;
   last_room = f->room;
+  write_count = 0;
   for (int i = 0; i < count; i++) {
     if (!mods[i].enabled) continue;
     call_handler(&mods[i], mods[i].on_frame_ref, false, 0);
@@ -1376,6 +1405,7 @@ void mods_shutdown(void) {
   active_mod = NULL;
   swap_count = 0;
   swap_owner[0] = 0;
+  write_count = 0;
   // Task 9: settings rows are session-only by deliberate decision (see mods_setting_count's own
   // comment in mods.h), so they must not outlive the session that registered them either -- the
   // same stale-state class as last_log/last_room above, now a third instance, closed the same

@@ -80,19 +80,16 @@ static int l_screen(lua_State *L) {
   return 1;
 }
 
-// $c000..$cfff and $ff80..$fffe only -- the same two windows wide.c reads, and the only ones
-// ModsFrame carries. The switchable bank at $d000..$dfff is not exposed at all: a plausible-
-// looking address in that range silently reads back 0, the same as any other address outside
-// both windows, rather than erroring -- acceptable for this stage (nothing in the planned API
-// needs it yet), but worth a mod author being told in MODDING.md, which says so under
-// oracles.rd, rather than their discovering it by reading zeroes and assuming their own math
-// was wrong.
+// $c000..$cfff and $ff80..$fffe, plus $d000..$dfff as WRAM bank 1 for an api=2 mod (so it can
+// read what oracles.wr writes there; api=1 promised zeroes in that range). Anything else reads
+// back 0 rather than erroring, as MODDING.md says under oracles.rd.
 static int l_rd(lua_State *L) {
   int addr = check_int(L, 1);
   const ModsFrame *f = mods_current_frame();
   int v = 0;
   if (addr >= 0xc000 && addr <= 0xcfff && f->wram) v = f->wram[addr - 0xc000];
   else if (addr >= 0xff80 && addr <= 0xfffe && f->hram) v = f->hram[addr - 0xff80];
+  else if (addr >= 0xd000 && addr <= 0xdfff && f->wram1 && mods_active_api() >= 2) v = f->wram1[addr - 0xd000];
   lua_pushinteger(L, v);
   return 1;
 }
@@ -508,6 +505,13 @@ static int l_swap_treasure(lua_State *L) {
   return 0;
 }
 
+static int l_wr(lua_State *L) {
+  int addr = check_int(L, 1), value = check_int(L, 2);
+  const char *why = mods_queue_write(addr, value);
+  if (why) return luaL_error(L, "oracles.wr: %s", why);
+  return 0;
+}
+
 // The one list of what the API is. MODDING.md must document exactly these. Kept alphabetical so
 // that cross-check can simply walk both lists in order.
 static const luaL_Reg api[] = {
@@ -531,6 +535,7 @@ static const luaL_Reg api[] = {
   {"store", l_store},
   {"swap_treasure", l_swap_treasure},
   {"tile_palette", l_tile_palette},
+  {"wr", l_wr},
   {NULL, NULL},
 };
 

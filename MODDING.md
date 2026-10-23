@@ -4,7 +4,8 @@ A mod is a small Lua script that runs alongside the game and draws on top of it.
 game's memory, put text, boxes and item icons on the screen, react to room changes, and remember
 things between sessions. Unless its `mod.ini` says otherwise it cannot change the game: the game runs
 exactly as it always does, and your mod watches and draws. A mod that declares `changes_game=yes` can
-also swap the items treasures give; see [Changing the game](#changing-the-game).
+also swap the items treasures give and write the game's memory; see
+[Changing the game](#changing-the-game).
 
 This page is for writing one. For playing, see the [README](README.md).
 
@@ -134,7 +135,7 @@ Every pixel you draw is opaque; there is no blending. Where you draw nothing, th
 
 ## API reference
 
-Everything a mod can call lives in the `oracles` table. This is the whole of it — twenty functions.
+Everything a mod can call lives in the `oracles` table. This is the whole of it — twenty-one functions.
 Anything not listed here does not exist (and a test fails the build if this list and the real one
 ever disagree).
 
@@ -329,14 +330,40 @@ local essences = oracles.rd(oracles.game() == "seasons" and 0xc6bb or 0xc6bf)
 ```
 
 **Only two windows are readable:** `$c000`-`$cfff` (work RAM bank 0) and `$ff80`-`$fffe` (high RAM).
-Anything else — including the switchable work RAM bank at `$d000`-`$dfff`, which this build does not
-expose at all — **reads back 0** instead of raising an error. A plausible-looking `$d1xx` address
-gives you a silent zero, not a complaint, so if a value is stubbornly 0 check the address is in range
-before suspecting your arithmetic.
+A mod that declares `api=2` gets a third: `$d000`-`$dfff` as work RAM **bank 1**, where the game keeps
+Link, enemies and the other objects, whatever bank the game has switched in at that moment. Anything
+else (and `$d000`-`$dfff` for an `api=1` mod) **reads back 0** instead of raising an error. A
+plausible-looking address outside your windows gives you a silent zero, not a complaint, so if a value
+is stubbornly 0 check the address is in range before suspecting your arithmetic.
 
 Addresses are the game's own, and nearly all of them differ between Ages and Seasons — so read them
 through `oracles.game()`, as above. The community Oracle of Ages/Seasons disassembly is where the
 names and addresses on this page come from.
+
+### `oracles.wr(addr, value)`
+
+Needs `api=2` and `changes_game=yes` (see [Changing the game](#changing-the-game)). Writes one byte of
+the game's work RAM. `addr` is `$c000`-`$cfff` (bank 0) or `$d000`-`$dfff` (bank 1, the objects, the
+same bank `oracles.rd` reads there); `value` is 0-255. Returns nothing.
+
+```lua
+local health, max = 0xc6aa, 0xc6ab                 -- Ages
+if oracles.game() == "seasons" then health, max = 0xc6a2, 0xc6a3 end
+oracles.on_room_change(function()
+  oracles.wr(health, oracles.rd(max))              -- full health in every new room
+end)
+```
+
+- Only inside `oracles.on_frame` and `oracles.on_room_change`. From `main.lua` it is an error: the
+  game's memory is not set up yet while your mod loads.
+- Writes wait until every mod has run this frame, and land before the game's next frame. A read in the
+  same frame still sees the old value.
+- A handler that errors or runs out of budget writes nothing at all, not even the writes it made
+  before failing.
+- 256 writes per frame, across all mods; the 257th is an error.
+- `$c0b0`-`$c2ff` is refused with an error. It holds the game's stacks and thread state, and a wrong
+  byte there stops the game outright rather than just confusing it.
+- Anything else is allowed, which means a wrong address can corrupt the save you are playing on.
 
 ### `oracles.room()`
 
@@ -515,8 +542,6 @@ What is **not** here, and will arrive clearly marked unstable when it does:
   function names, not the game's data. They move, split and get renamed as the port is worked on, so
   a mod built on them can break on any build. That is exactly why they are a later stage and will be
   marked unstable rather than folded in beside `oracles.rd`.
-- **Writing** memory. A mod changes the game only through treasure swaps today.
-
 `api=2` is the contract. It only added functions, for mods that ask for them, so an `api=1` mod runs
 exactly as before. If a future build ever has to change the meaning of something above, it will do it
 under a new `api` and keep honouring the old ones, rather than quietly changing what your mod does.
@@ -524,12 +549,13 @@ under a new `api` and keep honouring the old ones, rather than quietly changing 
 ## Changing the game
 
 A mod whose `mod.ini` has both `api=2` and `changes_game=yes` can swap the item a treasure gives, with
-`oracles.swap_treasure`. Without both lines that function raises an error, so an `api=1` mod can
-never change the game.
+`oracles.swap_treasure`, and write the game's memory, with `oracles.wr`. Without both lines those two
+functions raise an error, so an `api=1` mod can never change the game.
 
 This is what a randomizer needs, and it is also enough to ruin a playthrough: give Link the wrong
-item in the wrong place and the game can become impossible to finish. The limits on the function keep
-the app running; they cannot keep the game's own logic happy. Only install mods like this from
+item in the wrong place, or write the wrong byte, and the game can become impossible to finish or the
+save can be corrupted. The limits on the two functions keep the app running; they cannot keep the
+game's own logic happy. Only install mods like this from
 sources you trust, and keep a copy of your save.
 
 ## What a mod can and cannot see
@@ -611,9 +637,9 @@ accident. It is left unfixed on purpose for now, because the alternative is mach
 (watchdog threads, abandoning Lua worlds mid-run) out of proportion to the risk. It is also the
 concrete reason for the advice above: **install mods only from sources you trust.**
 
-**`oracles.rd` sees two windows, not all of memory.** `$c000`-`$cfff` and `$ff80`-`$fffe`. The
-switchable bank at `$d000`-`$dfff` is not exposed, and an address outside both windows reads 0
-rather than raising an error. See `oracles.rd` above.
+**`oracles.rd` sees two windows, not all of memory.** `$c000`-`$cfff` and `$ff80`-`$fffe`, plus
+`$d000`-`$dfff` as bank 1 for an `api=2` mod. The other work RAM banks are not exposed, and an address
+outside the windows reads 0 rather than raising an error. See `oracles.rd` above.
 
 **Numbers are clamped, not wrapped.** Lua integers are 64-bit, the drawing functions take 32-bit
 ones. Pass `4294967301` as a width and you get a very wide rectangle (clipped to the screen), not the

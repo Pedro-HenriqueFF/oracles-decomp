@@ -4779,6 +4779,140 @@ static void a_disabled_owner_leaves_no_swaps(void) {
   mods_shutdown();
 }
 
+static void writes_are_queued_for_the_next_frame(void) {
+  clear_mods();
+  const char *root = make_mod("writer", "id=writer\napi=2\nchanges_game=yes\ngames=ages,seasons\n",
+      "assert(not pcall(oracles.wr, 0xc6a5, 1))\n"
+      "oracles.on_frame(function()\n"
+      "  oracles.wr(0xc6a5, 0x42)\n"
+      "  oracles.wr(0xd240, 0x60)\n"
+      "  oracles.log('read=' .. oracles.rd(0xc6a5))\n"
+      "end)\n");
+  ASSERT(mods_init(root, false));
+  ASSERT(mods_enabled(0));
+  static uint8_t wram[0x1000], hram[127];
+  memset(wram, 0, sizeof wram);
+  ModsFrame f = { .wram = wram, .hram = hram, .width = 160, .room = 1 };
+  mods_frame(&f);
+  ASSERT(mods_enabled(0));
+  ASSERT(strstr(mods_last_log(), "read=0") != NULL);
+  ModWrite w[MODS_WRITES_MAX];
+  ASSERT_EQ(mods_take_writes(w, MODS_WRITES_MAX), 2);
+  ASSERT_EQ(w[0].addr, 0xc6a5);
+  ASSERT_EQ(w[0].value, 0x42);
+  ASSERT_EQ(w[1].addr, 0xd240);
+  ASSERT_EQ(w[1].value, 0x60);
+  ASSERT_EQ(mods_take_writes(w, MODS_WRITES_MAX), 0);
+  mods_shutdown();
+}
+
+static void writes_are_refused_where_they_would_break_the_engine(void) {
+  clear_mods();
+  const char *root = make_mod("badwriter", "id=badwriter\napi=2\nchanges_game=yes\ngames=ages,seasons\n",
+      "oracles.on_frame(function()\n"
+      "  assert(not pcall(oracles.wr, 0xc0b0, 0))\n"
+      "  assert(not pcall(oracles.wr, 0xc2ff, 0))\n"
+      "  assert(not pcall(oracles.wr, 0xbfff, 0))\n"
+      "  assert(not pcall(oracles.wr, 0xe000, 0))\n"
+      "  assert(not pcall(oracles.wr, 0xff90, 0))\n"
+      "  assert(not pcall(oracles.wr, 0xc000, 256))\n"
+      "  assert(not pcall(oracles.wr, 0xc000, -1))\n"
+      "  oracles.wr(0xc0af, 1)\n"
+      "  oracles.wr(0xc300, 2)\n"
+      "  oracles.wr(0xdfff, 3)\n"
+      "  oracles.log('survived')\n"
+      "end)\n");
+  ASSERT(mods_init(root, false));
+  static uint8_t wram[0x1000], hram[127];
+  ModsFrame f = { .wram = wram, .hram = hram, .width = 160, .room = 1 };
+  mods_frame(&f);
+  ASSERT(mods_enabled(0));
+  ASSERT(strstr(mods_last_log(), "survived") != NULL);
+  ModWrite w[MODS_WRITES_MAX];
+  ASSERT_EQ(mods_take_writes(w, MODS_WRITES_MAX), 3);
+  mods_shutdown();
+}
+
+static void a_frame_takes_at_most_256_writes(void) {
+  clear_mods();
+  const char *root = make_mod("manywrites", "id=manywrites\napi=2\nchanges_game=yes\ngames=ages,seasons\n",
+      "oracles.on_frame(function()\n"
+      "  for i = 1, 256 do oracles.wr(0xc400, i % 256) end\n"
+      "  assert(not pcall(oracles.wr, 0xc400, 0))\n"
+      "end)\n");
+  ASSERT(mods_init(root, false));
+  static uint8_t wram[0x1000], hram[127];
+  ModsFrame f = { .wram = wram, .hram = hram, .width = 160, .room = 1 };
+  mods_frame(&f);
+  ASSERT(mods_enabled(0));
+  ModWrite w[MODS_WRITES_MAX];
+  ASSERT_EQ(mods_take_writes(w, MODS_WRITES_MAX), 256);
+  mods_frame(&f);
+  ASSERT(mods_enabled(0));
+  mods_shutdown();
+}
+
+static void a_failing_handler_writes_nothing(void) {
+  clear_mods();
+  make_mod("agoodwriter", "id=agoodwriter\napi=2\nchanges_game=yes\ngames=ages,seasons\n",
+      "oracles.on_frame(function() oracles.wr(0xc401, 7) end)\n");
+  const char *root = make_mod("bfailwriter", "id=bfailwriter\napi=2\nchanges_game=yes\ngames=ages,seasons\n",
+      "oracles.on_frame(function() oracles.wr(0xc400, 1) error('after the write') end)\n");
+  ASSERT(mods_init(root, false));
+  static uint8_t wram[0x1000], hram[127];
+  cap_frame = (ModsFrame){ .wram = wram, .hram = hram, .width = 160, .room = 1 };
+  char out[8192];
+  capture_stderr(run_cap_mods_frame, out, sizeof out);
+  ASSERT(mods_enabled(0));
+  ASSERT(!mods_enabled(1));
+  ModWrite w[MODS_WRITES_MAX];
+  ASSERT_EQ(mods_take_writes(w, MODS_WRITES_MAX), 1);
+  ASSERT_EQ(w[0].addr, 0xc401);
+  mods_shutdown();
+}
+
+static void wr_needs_api_2_and_changes_game(void) {
+  clear_mods();
+  const char *root = make_mod("v1writer", "id=v1writer\napi=1\ngames=ages,seasons\n",
+      "oracles.on_frame(function() assert(not pcall(oracles.wr, 0xc400, 1)) oracles.log('refused') end)\n");
+  ASSERT(mods_init(root, false));
+  static uint8_t wram[0x1000], hram[127];
+  ModsFrame f = { .wram = wram, .hram = hram, .width = 160, .room = 1 };
+  mods_frame(&f);
+  ASSERT(mods_enabled(0));
+  ASSERT(strstr(mods_last_log(), "refused") != NULL);
+  ModWrite w[MODS_WRITES_MAX];
+  ASSERT_EQ(mods_take_writes(w, MODS_WRITES_MAX), 0);
+  mods_shutdown();
+}
+
+static void api_2_reads_bank_1(void) {
+  clear_mods();
+  const char *root = make_mod("rdtwo", "id=rdtwo\napi=2\ngames=ages,seasons\n",
+      "oracles.on_frame(function() oracles.log('v2=' .. oracles.rd(0xd240) .. ' end=' .. oracles.rd(0xdfff)) end)\n");
+  ASSERT(mods_init(root, false));
+  static uint8_t wram[0x1000], wram1[0x1000], hram[127];
+  wram1[0x240] = 0x60;
+  wram1[0xfff] = 0x11;
+  ModsFrame f = { .wram = wram, .wram1 = wram1, .hram = hram, .width = 160, .room = 1 };
+  mods_frame(&f);
+  ASSERT(strstr(mods_last_log(), "v2=96 end=17") != NULL);
+  mods_shutdown();
+}
+
+static void api_1_still_reads_zero_in_bank_1(void) {
+  clear_mods();
+  const char *root = make_mod("rdone", "id=rdone\napi=1\ngames=ages,seasons\n",
+      "oracles.on_frame(function() oracles.log('v1=' .. oracles.rd(0xd240)) end)\n");
+  ASSERT(mods_init(root, false));
+  static uint8_t wram[0x1000], wram1[0x1000], hram[127];
+  wram1[0x240] = 0x60;
+  ModsFrame f = { .wram = wram, .wram1 = wram1, .hram = hram, .width = 160, .room = 1 };
+  mods_frame(&f);
+  ASSERT(strstr(mods_last_log(), "v1=0") != NULL);
+  mods_shutdown();
+}
+
 static void the_treasure_list_matches_the_disassembly(void) {
   ASSERT_EQ(mods_treasure_subids(false, 0x05), 7);    // Ages' sword subids
   ASSERT_EQ(mods_treasure_subids(false, 0x01), 4);    // shield
@@ -4991,5 +5125,12 @@ int main(void) {
   RUN(only_one_mod_swaps_treasures);
   RUN(the_swap_table_holds_512);
   RUN(a_disabled_owner_leaves_no_swaps);
+  RUN(writes_are_queued_for_the_next_frame);
+  RUN(writes_are_refused_where_they_would_break_the_engine);
+  RUN(a_frame_takes_at_most_256_writes);
+  RUN(a_failing_handler_writes_nothing);
+  RUN(wr_needs_api_2_and_changes_game);
+  RUN(api_2_reads_bank_1);
+  RUN(api_1_still_reads_zero_in_bank_1);
   return skipped ? 77 : 0;
 }
