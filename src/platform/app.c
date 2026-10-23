@@ -219,6 +219,7 @@ static const char *pad_name(int button) {
 }
 
 static uint8_t live_joy, slot_joy[2], stick_joy, stick_pressed, triggers_held;
+static TapLatch taps;
 static int trigger_down = NO_BINDING, trigger_up = NO_BINDING;
 static uint8_t live_input(void *ctx, uint64_t frame) { (void)ctx; (void)frame; return live_joy | slot_joy[0] | slot_joy[1] | stick_joy; }
 
@@ -1916,12 +1917,12 @@ static GameEnd run_game(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, co
           if (a == ACT_FAST) fast = true;
           else if (a == ACT_SWAP) features_quick_swap(gb);
           else if (item) item_button(gb, dir, a == ACT_ITEM_Y, true);
-          else live_joy |= joy_of((Action)a);
+          else live_joy = tap_press(&taps, live_joy, joy_of((Action)a));
         }
         if (release >> a & 1) {
           if (a == ACT_FAST) fast = false;
           else if (item) item_button(gb, dir, a == ACT_ITEM_Y, false);
-          else live_joy &= (uint8_t)~joy_of((Action)a);
+          else live_joy = tap_release(&taps, live_joy, joy_of((Action)a));
         }
       }
     }
@@ -1978,6 +1979,7 @@ static GameEnd run_game(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, co
       features_frame(gb); gb_run_frame(gb);
       frames++;
     }
+    live_joy = tap_frame_ran(&taps, live_joy);
 
     if (settings.widescreen && mode == MODE_PLAY && boot.phase == BOOT_OFF && wide_npcs_update(gb)) npcs_signal();
 

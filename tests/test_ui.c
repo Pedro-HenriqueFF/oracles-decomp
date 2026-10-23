@@ -1,4 +1,5 @@
 #include "unit.h"
+#include "core/gb.h"
 #include "ui/ui.h"
 #include "ui/savefile.h"
 #include "ui/launcher.h"
@@ -321,6 +322,26 @@ static void filters_keep_pixel_alignment(void) {
   uint8_t in[3] = {255, 255, 255}, out[3];
   ui_gbc_colour(in, out);
   ASSERT(out[0] < 255 && out[2] < out[0]);              // paler and warm
+}
+
+static void a_tap_between_frames_reaches_the_game(void) {
+  TapLatch t = {0};
+  uint8_t held = tap_press(&t, 0, JOY_B);
+  held = tap_release(&t, held, JOY_B);
+  ASSERT_EQ(held, JOY_B);                               // no frame saw it yet: still down
+  held = tap_frame_ran(&t, held);
+  ASSERT_EQ(held, 0);                                   // one frame later it is up
+  held = tap_press(&t, held, JOY_A);
+  held = tap_frame_ran(&t, held);
+  held = tap_release(&t, held, JOY_A);
+  ASSERT_EQ(held, 0);                                   // a press a frame has seen lets go at once
+  held = tap_press(&t, held, JOY_A | JOY_UP);
+  held = tap_release(&t, held, JOY_A);
+  held = tap_press(&t, held, JOY_A);
+  held = tap_frame_ran(&t, held);
+  ASSERT_EQ(held, JOY_A | JOY_UP);                      // pressed again before the frame: held on
+  held = tap_release(&t, held, JOY_DOWN);
+  ASSERT_EQ(held, JOY_A | JOY_UP);                      // a release of an unheld button changes nothing
 }
 
 static void bindings_remap_and_persist(void) {
@@ -722,6 +743,7 @@ int main(void) {
   RUN(upscalers_apply_gbc_colours_first);
   RUN(the_two_scalers_differ);
   RUN(upscale_factor_is_capped_at_the_window_scale);
+  RUN(a_tap_between_frames_reaches_the_game);
   RUN(bindings_remap_and_persist);
   RUN(labels_follow_device_style_and_bindings);
   RUN(touch_layout_fits_screens);

@@ -38,3 +38,15 @@ void controls_open(ControlsMenu *m);
 MenuAction controls_press(ControlsMenu *m, Bindings *b, UiButton button);
 void controls_capture_key(ControlsMenu *m, Bindings *b, int key);
 void controls_capture_pad(ControlsMenu *m, Bindings *b, int button);
+
+// Input arrives between frames, so a tap pressed and released before the next frame would never
+// reach the game. A release of a button no frame has seen yet waits for tap_frame_ran.
+// Each call takes the held Game Boy buttons and returns them updated.
+typedef struct {
+  uint8_t unseen;               // pressed since the last frame ran
+  uint8_t late;                 // released before any frame saw the press
+} TapLatch;
+
+uint8_t tap_press(TapLatch *t, uint8_t held, uint8_t bits);
+uint8_t tap_release(TapLatch *t, uint8_t held, uint8_t bits);
+uint8_t tap_frame_ran(TapLatch *t, uint8_t held);

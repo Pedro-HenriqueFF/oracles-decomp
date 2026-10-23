@@ -112,3 +112,20 @@ void controls_capture_pad(ControlsMenu *m, Bindings *b, int button) {
   m->pad_page = true;
   m->waiting = false;
 }
+
+uint8_t tap_press(TapLatch *t, uint8_t held, uint8_t bits) {
+  t->unseen |= bits;
+  t->late &= (uint8_t)~bits;
+  return held | bits;
+}
+
+uint8_t tap_release(TapLatch *t, uint8_t held, uint8_t bits) {
+  t->late |= bits & t->unseen;
+  return held & (uint8_t)~(bits & ~t->unseen);
+}
+
+uint8_t tap_frame_ran(TapLatch *t, uint8_t held) {
+  held &= (uint8_t)~t->late;
+  t->unseen = t->late = 0;
+  return held;
+}
