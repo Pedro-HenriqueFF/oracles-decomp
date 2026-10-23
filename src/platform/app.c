@@ -1657,6 +1657,9 @@ static uint8_t boot_input(GB *gb, BootDriver *d, uint64_t frame) {
 #define NO_SAVE UINT64_MAX
 #define PARK_TIMEOUT 600
 
+#define GB_FRAME_NS (FRAME_CYCLES * 1000000000ull / 4194304)
+#define FF_MAX_LAG_NS 50000000
+
 
 typedef enum { GAME_TO_LAUNCHER, GAME_QUIT, GAME_FAILED } GameEnd;
 typedef enum { MODE_PLAY, MODE_PAUSING, MODE_PAUSED, MODE_QUITTING } GameMode;
@@ -1798,7 +1801,7 @@ static GameEnd run_game(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, co
   bool mod_was_enabled[MODS_MAX];
   for (int i = 0; i < mod_count; i++) mod_was_enabled[i] = mods_enabled(i);
   for (int i = 0; i < mod_count; i++) if (!mod_was_enabled[i]) { show_status("Mod disabled"); break; }
-  uint64_t frames = 0, save_from = NO_SAVE, park_from = 0;
+  uint64_t frames = 0, save_from = NO_SAVE, park_from = 0, ff_due = 0;
   bool muted = false, parked = false, fast = false;
   GameMode mode = MODE_PLAY;
   GameEnd end = GAME_QUIT;
@@ -1961,8 +1964,13 @@ static GameEnd run_game(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, co
       if (boot.phase == BOOT_OFF) { live_joy = 0; fprintf(stderr, "boot into file %d done at frame %llu\n", boot.file + 1, (unsigned long long)frames); }
       apu_read_samples(&gb->apu, samples, APU_RING);
     } else if (fast && mode == MODE_PLAY) {
-      // fast-forward: up to 4 frames per shown frame, paced by the display, without sound
-      for (int i = 0; i < 4; i++) { features_frame(gb); gb_run_frame(gb); frames++; }
+      // fast-forward: ff_speed times the Game Boy's frame rate, by the clock rather than the display
+      // (a vsynced present comes at anything from 60 to 240 Hz), without sound. Just pressed, or
+      // more than FF_MAX_LAG_NS behind on a device too slow for the speed: count from now.
+      uint64_t now = SDL_GetTicksNS();
+      if ((int64_t)(now - ff_due) > FF_MAX_LAG_NS) ff_due = now;
+      if ((int64_t)(ff_due - now) > 0) { SDL_Delay(1); continue; }
+      while ((int64_t)(now - ff_due) >= 0) { features_frame(gb); gb_run_frame(gb); frames++; ff_due += GB_FRAME_NS / settings.ff_speed; }
       apu_read_samples(&gb->apu, samples, APU_RING);
       oracles_frame_wait();
     } else {

@@ -167,16 +167,20 @@ static void settings_round_trip(void) {
   s.widescreen = true; s.dim_sides = false;
   ASSERT(s.haptics);                                    // on until the player turns it off
   s.haptics = false;
+  ASSERT_EQ(s.ff_speed, 3);
+  s.ff_speed = FF_SPEED_MAX;
   char buf[1024];
   settings_format(&s, buf, sizeof buf);
   settings_default(&back);
   settings_parse(&back, buf);
   ASSERT_EQ(back.volume, 3);
   ASSERT_EQ(back.filter, FILTER_CRT);
+  ASSERT_EQ(back.ff_speed, FF_SPEED_MAX);
   ASSERT(back.gbc_colours && back.fullscreen && back.fill && back.widescreen && !back.dim_sides && !back.haptics);
-  settings_parse(&back, "volume=99\nfilter=weird\nunknown=1\n  volume = 7\n");
+  settings_parse(&back, "volume=99\nfilter=weird\nunknown=1\n  volume = 7\nfast_forward=9\nfast_forward=1\n");
   ASSERT_EQ(back.volume, 7);                            // 99 rejected, spaced line accepted
   ASSERT_EQ(back.filter, FILTER_CRT);
+  ASSERT_EQ(back.ff_speed, FF_SPEED_MAX);               // above the top and below the bottom: both rejected
   ASSERT_EQ(s.pad_style, STYLE_AUTO);
   s.pad_style = STYLE_PLAYSTATION;
   settings_format(&s, buf, sizeof buf);
@@ -228,11 +232,23 @@ static void settings_menu_changes_values(void) {
   settings_press(&m, &s, UI_ACCEPT, &row);
   ASSERT(s.quick_swap);
   settings_press(&m, &s, UI_UP, &row);
+  ASSERT_EQ(m.sel, SET_FF_SPEED);
+  settings_press(&m, &s, UI_ACCEPT, &row);
+  ASSERT_EQ(s.ff_speed, 4);
+  settings_press(&m, &s, UI_LEFT, &row);
+  settings_press(&m, &s, UI_LEFT, &row);
+  ASSERT_EQ(s.ff_speed, FF_SPEED_MIN);
+  settings_press(&m, &s, UI_LEFT, &row);
+  ASSERT_EQ(s.ff_speed, FF_SPEED_MAX);                  // wraps, so tapping the row reaches every speed
+  settings_press(&m, &s, UI_RIGHT, &row);
+  ASSERT_EQ(s.ff_speed, FF_SPEED_MIN);
+  settings_press(&m, &s, UI_UP, &row);
   settings_press(&m, &s, UI_ACCEPT, &row);
   ASSERT(s.fast_menus);
   settings_press(&m, &s, UI_UP, &row);
   settings_press(&m, &s, UI_ACCEPT, &row);
   ASSERT(s.fast_text);
+  settings_press(&m, &s, UI_DOWN, &row);
   settings_press(&m, &s, UI_DOWN, &row);
   settings_press(&m, &s, UI_DOWN, &row);
   settings_press(&m, &s, UI_DOWN, &row);

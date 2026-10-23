@@ -17,7 +17,7 @@ What this port adds on top of the original games:
 - **Save states** — 4 slots with thumbnails, plus a Resume state from wherever you last quit
 - **Save sync** — your saves and states follow you between desktop and phone, no passwords
 - **Remappable controls** — every button, for keyboard and gamepad
-- **Fast-forward** — hold Tab, or the right trigger
+- **Fast-forward** — hold Tab, or the right trigger; 3x by default, 2x to 8x in Settings
 - **Screen filters** — sharp, scanlines, LCD grid, CRT, or the xBRZ and hqx pixel-art scalers, and true Game Boy Color colours
 - **Fast text and faster menus** — optional, off by default
 - **Quick swap and 4 item slots** — optional, off by default
@@ -109,7 +109,8 @@ From the launcher or the pause menu: volume, screen filter (sharp, scanlines, LC
 two pixel-art scalers XBRZ and HQX, which round off jagged diagonals instead of turning each pixel
 into a square — they are two different algorithms, so it is worth trying both), scale
 (**pixel** for whole-pixel steps, **fill** for the largest size that fits), Game Boy Color colours,
-fullscreen, controls and [portable mode](#portable-mode).
+fullscreen, fast-forward speed (2x to 8x, 3x by default, the same on any display), controls and
+[portable mode](#portable-mode).
 
 There are also quality-of-life toggles, **all off by default**:
 

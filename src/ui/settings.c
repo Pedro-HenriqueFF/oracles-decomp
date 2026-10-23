@@ -16,6 +16,7 @@ void settings_default(Settings *s) {
   s->fast_text = false;
   s->quick_swap = false;
   s->fast_menus = false;
+  s->ff_speed = 3;
   s->four_slots = false;
   s->haptics = true;
   s->pad_style = STYLE_AUTO;
@@ -40,6 +41,7 @@ void settings_parse(Settings *s, const char *text) {
       else if (!strcmp(key, "fast_text")) s->fast_text = !strcmp(value, "on");
       else if (!strcmp(key, "quick_swap")) s->quick_swap = !strcmp(value, "on");
       else if (!strcmp(key, "fast_menus")) s->fast_menus = !strcmp(value, "on");
+      else if (!strcmp(key, "fast_forward")) { int v = atoi(value); if (v >= FF_SPEED_MIN && v <= FF_SPEED_MAX) s->ff_speed = v; }
       else if (!strcmp(key, "four_slots")) s->four_slots = !strcmp(value, "on");
       else if (!strcmp(key, "haptics")) s->haptics = !strcmp(value, "on");
       else if (!strcmp(key, "filter")) {
@@ -55,9 +57,9 @@ void settings_parse(Settings *s, const char *text) {
 }
 
 int settings_format(const Settings *s, char *out, size_t size) {
-  int n = snprintf(out, size, "volume=%d\nfullscreen=%s\nfilter=%s\nscale=%s\nwidescreen=%s\ndim_sides=%s\ngbc_colours=%s\nfast_text=%s\nfast_menus=%s\nquick_swap=%s\nfour_slots=%s\nhaptics=%s\ncontroller_style=%s\n",
+  int n = snprintf(out, size, "volume=%d\nfullscreen=%s\nfilter=%s\nscale=%s\nwidescreen=%s\ndim_sides=%s\ngbc_colours=%s\nfast_text=%s\nfast_menus=%s\nfast_forward=%d\nquick_swap=%s\nfour_slots=%s\nhaptics=%s\ncontroller_style=%s\n",
                    s->volume, s->fullscreen ? "on" : "off", filter_keys[s->filter], s->fill ? "fill" : "pixel", s->widescreen ? "on" : "off", s->dim_sides ? "on" : "off", s->gbc_colours ? "on" : "off",
-                   s->fast_text ? "on" : "off", s->fast_menus ? "on" : "off", s->quick_swap ? "on" : "off", s->four_slots ? "on" : "off",
+                   s->fast_text ? "on" : "off", s->fast_menus ? "on" : "off", s->ff_speed, s->quick_swap ? "on" : "off", s->four_slots ? "on" : "off",
                    s->haptics ? "on" : "off", pad_style_keys[s->pad_style < STYLES ? s->pad_style : STYLE_AUTO]);
   if (n < (int)size) n += bindings_format(&s->bindings, out + n, size - n);
   return n;
@@ -101,6 +103,7 @@ MenuAction settings_press(SettingsMenu *m, Settings *s, UiButton b, SettingsRow 
   case SET_FULLSCREEN: if (dir) s->fullscreen = !s->fullscreen; break;
   case SET_FAST_TEXT: if (dir) s->fast_text = !s->fast_text; break;
   case SET_FAST_MENUS: if (dir) s->fast_menus = !s->fast_menus; break;
+  case SET_FF_SPEED: s->ff_speed = FF_SPEED_MIN + (s->ff_speed - FF_SPEED_MIN + dir + FF_SPEEDS) % FF_SPEEDS; break;
   case SET_QUICK_SWAP: if (dir) s->quick_swap = !s->quick_swap; break;
   case SET_FOUR_SLOTS: if (dir) s->four_slots = !s->four_slots; break;
   case SET_HAPTICS: if (dir) s->haptics = !s->haptics; break;
