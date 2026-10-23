@@ -40,7 +40,7 @@
 // way, for the same reason.
 struct lua_State;
 
-#define MODS_API_VERSION 1
+#define MODS_API_VERSION 2
 // The hard cap on how many mods occupy a slot in mods[] at once -- counting a disabled mod
 // exactly the same as an enabled one, since a disabled mod still has an id, a name and a reason
 // to show on a status line; only a mod never accepted for this game at all (wrong game, bad
@@ -391,3 +391,10 @@ bool mods_store_set(const char *key, size_t key_len, const ModValue *value);
 // and refusing a read here would break that same legitimate mod-in-development workflow for no
 // safety benefit, since nothing is written on this path.
 bool mods_store_get(const char *key, size_t key_len, ModValue *out);
+
+#define MODS_SWAPS_MAX 512
+// For the engine (features.treasure_swap): true, with the replacement, when the mod that owns the
+// swap table set one for treasure (id, subid) loading in (group, room).
+bool mods_treasure_swap(int group, int room, uint8_t id, uint8_t subid, uint8_t *new_id, uint8_t *new_subid);
+// For api.c: oracles.swap_treasure for the running mod. NULL on success, else why it was refused.
+const char *mods_add_swap(int group, int room, int id, int subid, int new_id, int new_subid);

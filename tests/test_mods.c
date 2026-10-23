@@ -4659,6 +4659,126 @@ static void the_picture_scroll_is_the_play_areas_first_line(void) {
   ASSERT_EQ(y, 184);
 }
 
+static ModsFrame cap_frame;
+static void run_cap_mods_frame(void) { mods_frame(&cap_frame); }
+
+static const char *swap_lua = "oracles.swap_treasure(0, 1, 0x28, 0, 0x0d, 0)\n";
+
+static void swap_treasure_needs_api_2_and_changes_game(void) {
+  clear_mods();
+  make_mod("swapa", "id=swapa\napi=1\nchanges_game=yes\ngames=ages,seasons\n", swap_lua);
+  const char *root = make_mod("swapb", "id=swapb\napi=2\ngames=ages,seasons\n", swap_lua);
+  cap_root = root;
+  cap_seasons = false;
+  char out[8192];
+  capture_stderr(run_cap_mods_init, out, sizeof out);
+  ASSERT(cap_result);
+  ASSERT_EQ(mods_count(), 2);
+  ASSERT(!mods_enabled(0));
+  ASSERT(!mods_enabled(1));
+  ASSERT(strstr(out, "needs api=2 and changes_game=yes") != NULL);
+  uint8_t id, sub;
+  ASSERT(!mods_treasure_swap(0, 1, 0x28, 0, &id, &sub));
+  mods_shutdown();
+}
+
+static void a_swap_replaces_the_treasure_in_its_room(void) {
+  clear_mods();
+  const char *root = make_mod("swapper", "id=swapper\napi=2\nchanges_game=yes\ngames=ages,seasons\n",
+      "oracles.swap_treasure(0, 1, 0x28, 0, 0x0d, 0)\n"
+      "oracles.swap_treasure(0, 1, 0x28, 0, 0x05, 2)\n"
+      "oracles.swap_treasure(3, 0xfc, 0x34, 8, 0x01, 3)\n");
+  ASSERT(mods_init(root, false));
+  ASSERT(mods_enabled(0));
+  uint8_t id = 0, sub = 0;
+  ASSERT(mods_treasure_swap(0, 1, 0x28, 0, &id, &sub));
+  ASSERT_EQ(id, 0x05);
+  ASSERT_EQ(sub, 2);
+  ASSERT(mods_treasure_swap(3, 0xfc, 0x34, 8, &id, &sub));
+  ASSERT_EQ(id, 0x01);
+  ASSERT_EQ(sub, 3);
+  ASSERT(!mods_treasure_swap(0, 2, 0x28, 0, &id, &sub));
+  ASSERT(!mods_treasure_swap(0, 1, 0x28, 1, &id, &sub));
+  mods_shutdown();
+  ASSERT(!mods_treasure_swap(0, 1, 0x28, 0, &id, &sub));
+}
+
+static void a_swap_must_name_a_real_treasure(void) {
+  clear_mods();
+  const char *root = make_mod("badswap", "id=badswap\napi=2\nchanges_game=yes\ngames=ages,seasons\n",
+      "assert(not pcall(oracles.swap_treasure, 0, 1, 0x28, 0, 0x05, 7))\n"
+      "assert(not pcall(oracles.swap_treasure, 8, 1, 0x28, 0, 0x05, 0))\n"
+      "assert(not pcall(oracles.swap_treasure, 0, 256, 0x28, 0, 0x05, 0))\n"
+      "assert(not pcall(oracles.swap_treasure, 0, 1, -1, 0, 0x05, 0))\n"
+      "assert(not pcall(oracles.swap_treasure, 0, 1, 0x28, 0, 0x13, 0))\n");
+  ASSERT(mods_init(root, false));
+  ASSERT(mods_enabled(0));
+  uint8_t id, sub;
+  ASSERT(!mods_treasure_swap(0, 1, 0x28, 0, &id, &sub));
+  mods_shutdown();
+}
+
+static void only_one_mod_swaps_treasures(void) {
+  clear_mods();
+  make_mod("aswap", "id=aswap\napi=2\nchanges_game=yes\ngames=ages,seasons\n", swap_lua);
+  const char *root = make_mod("bswap", "id=bswap\napi=2\nchanges_game=yes\ngames=ages,seasons\n",
+      "oracles.swap_treasure(0, 2, 0x28, 0, 0x05, 0)\n");
+  cap_root = root;
+  cap_seasons = false;
+  char out[8192];
+  capture_stderr(run_cap_mods_init, out, sizeof out);
+  ASSERT(mods_enabled(0));
+  ASSERT(!mods_enabled(1));
+  ASSERT(strstr(out, "another mod already swaps treasures") != NULL);
+  uint8_t id, sub;
+  ASSERT(mods_treasure_swap(0, 1, 0x28, 0, &id, &sub));
+  ASSERT(!mods_treasure_swap(0, 2, 0x28, 0, &id, &sub));
+  mods_shutdown();
+}
+
+static void the_swap_table_holds_512(void) {
+  clear_mods();
+  const char *root = make_mod("fullswap", "id=fullswap\napi=2\nchanges_game=yes\ngames=ages,seasons\n",
+      "for i = 0, 511 do oracles.swap_treasure(i // 256, i % 256, 0x28, 0, 0x0d, 0) end\n"
+      "oracles.swap_treasure(0, 0, 0x28, 0, 0x05, 0)\n"
+      "assert(not pcall(oracles.swap_treasure, 2, 0, 0x28, 0, 0x0d, 0))\n");
+  ASSERT(mods_init(root, false));
+  ASSERT(mods_enabled(0));
+  uint8_t id, sub;
+  ASSERT(mods_treasure_swap(1, 255, 0x28, 0, &id, &sub));
+  ASSERT(mods_treasure_swap(0, 0, 0x28, 0, &id, &sub));
+  ASSERT_EQ(id, 0x05);
+  ASSERT(!mods_treasure_swap(2, 0, 0x28, 0, &id, &sub));
+  mods_shutdown();
+}
+
+static void a_disabled_owner_leaves_no_swaps(void) {
+  clear_mods();
+  const char *root = make_mod("dyingswap", "id=dyingswap\napi=2\nchanges_game=yes\ngames=ages,seasons\n",
+      "oracles.swap_treasure(0, 1, 0x28, 0, 0x0d, 0)\n"
+      "oracles.on_frame(function() error('boom') end)\n");
+  ASSERT(mods_init(root, false));
+  uint8_t id, sub;
+  ASSERT(mods_treasure_swap(0, 1, 0x28, 0, &id, &sub));
+  static uint8_t wram[0x1000], hram[127];
+  cap_frame = (ModsFrame){ .wram = wram, .hram = hram, .width = 160, .room = 1 };
+  char out[8192];
+  capture_stderr(run_cap_mods_frame, out, sizeof out);
+  ASSERT(!mods_enabled(0));
+  ASSERT(!mods_treasure_swap(0, 1, 0x28, 0, &id, &sub));
+  mods_shutdown();
+
+  clear_mods();
+  root = make_mod("failswap", "id=failswap\napi=2\nchanges_game=yes\ngames=ages,seasons\n",
+      "oracles.swap_treasure(0, 1, 0x28, 0, 0x0d, 0)\nerror('late')\n");
+  cap_root = root;
+  cap_seasons = false;
+  capture_stderr(run_cap_mods_init, out, sizeof out);
+  ASSERT(!mods_enabled(0));
+  ASSERT(!mods_treasure_swap(0, 1, 0x28, 0, &id, &sub));
+  mods_shutdown();
+}
+
 static void the_treasure_list_matches_the_disassembly(void) {
   ASSERT_EQ(mods_treasure_subids(false, 0x05), 7);    // Ages' sword subids
   ASSERT_EQ(mods_treasure_subids(false, 0x01), 4);    // shield
@@ -4865,5 +4985,11 @@ int main(void) {
   RUN(camera_is_nil_without_a_picture);
   RUN(the_picture_scroll_is_the_play_areas_first_line);
   RUN(the_treasure_list_matches_the_disassembly);
+  RUN(swap_treasure_needs_api_2_and_changes_game);
+  RUN(a_swap_replaces_the_treasure_in_its_room);
+  RUN(a_swap_must_name_a_real_treasure);
+  RUN(only_one_mod_swaps_treasures);
+  RUN(the_swap_table_holds_512);
+  RUN(a_disabled_owner_leaves_no_swaps);
   return skipped ? 77 : 0;
 }

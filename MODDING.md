@@ -2,13 +2,14 @@
 
 A mod is a small Lua script that runs alongside the game and draws on top of it. It can read the
 game's memory, put text, boxes and item icons on the screen, react to room changes, and remember
-things between sessions. It cannot change the game: the game runs exactly as it always does, and your
-mod watches and draws.
+things between sessions. Unless its `mod.ini` says otherwise it cannot change the game: the game runs
+exactly as it always does, and your mod watches and draws. A mod that declares `changes_game=yes` can
+also swap the items treasures give; see [Changing the game](#changing-the-game).
 
 This page is for writing one. For playing, see the [README](README.md).
 
-Mods are new. The API below is small on purpose, and it is versioned (`api=1`), so a mod written
-today keeps working as it grows. See [Stable and unstable](#stable-and-unstable) for what is safe to
+Mods are new. The API below is small on purpose, and it is versioned (`api=2` today, and an `api=1`
+mod keeps working unchanged), so a mod written today keeps working as it grows. See [Stable and unstable](#stable-and-unstable) for what is safe to
 build on.
 
 ## Installing a mod
@@ -69,9 +70,10 @@ games=ages,seasons
 | Key | Required | What it does |
 |---|---|---|
 | `id` | yes | Must be exactly the folder name. A mod that disagrees with its own folder is refused — this is how a package says who it is rather than relying on where it was unzipped. |
-| `api` | yes | Which version of the API the mod was written against. Must be 1 or more. This build supports up to **1**. |
+| `api` | yes | Which version of the API the mod was written against. Must be 1 or more. This build supports up to **2**. |
 | `games` | yes | `ages`, `seasons`, or `ages,seasons`. A mod is only loaded for a game it names. Anything else in the list is reported and ignored, so a typo costs you that one word, not the mod. |
 | `name` | no | The display name. Defaults to the id. |
+| `changes_game` | no | `yes` lets an `api=2` mod change the game (see [Changing the game](#changing-the-game)). Leave it out, or write anything else, and the mod only watches and draws. |
 
 Any other key is ignored, so `version=` and `author=` above are documentation for whoever reads your
 package — the app does not read them today, and keeping them is harmless.
@@ -132,7 +134,7 @@ Every pixel you draw is opaque; there is no blending. Where you draw nothing, th
 
 ## API reference
 
-Everything a mod can call lives in the `oracles` table. This is the whole of it — nineteen functions.
+Everything a mod can call lives in the `oracles` table. This is the whole of it — twenty functions.
 Anything not listed here does not exist (and a test fails the build if this list and the real one
 ever disagree).
 
@@ -447,6 +449,38 @@ refusing rather than by quietly mangling your data:
 Break one of those and this raises a Lua error — which switches your mod off unless you wrap the call
 in `pcall`. If you are storing something a player typed or a value from the game, check it first.
 
+### `oracles.swap_treasure(group, room, id, subid, new_id, new_subid)`
+
+Needs `api=2` and `changes_game=yes` (see [Changing the game](#changing-the-game)). From now on,
+whenever treasure `(id, subid)` appears in room `room` of group `group`, it is treasure
+`(new_id, new_subid)` instead. Returns nothing.
+
+```lua
+-- Ages: the sword in group 0, room $39 becomes bombchus
+oracles.swap_treasure(0, 0x39, 0x05, 0, 0x0d, 0)
+```
+
+- A treasure is almost any item Link holds up or picks up: chest contents, gifts from people, items
+  lying in a room, what a shopkeeper hands over. `id` and `subid` are the treasure index and subid
+  from the disassembly (`constants/common/treasure.s`, `data/{game}/treasureObjectData.s`).
+  `group` and `room` are what `oracles.room()` returns.
+- The place keeps its own way of showing the item (rising out of a chest, a puff of smoke, falling
+  from the top of the screen, buried) and the room flag that remembers it was taken. Everything else
+  comes from the new treasure: what Link gets, how he holds it up, the text and the sprite.
+- Calling it again with the same first four arguments replaces that swap. It works from `main.lua`
+  and from a handler, and applies the next time that treasure appears.
+- `(new_id, new_subid)` must be a treasure of the game being played: one of its listed subids, or
+  subid 0 for a treasure without subids. Anything else is an error, and so is a `group` outside 0-7
+  or a `room`, `id` or `subid` outside 0-255.
+- One mod owns swaps: the first one to call this. Another mod calling it gets an error.
+- 512 swaps at most; a 513th different one is an error.
+- When your mod is switched off (an error, a budget), its swaps go with it.
+- Items that come in levels (swords, shields, the seed satchel): rewrite the swap from
+  `oracles.on_frame` when the inventory changes, so the next one is the right level. Getting an item
+  takes well over a second, so there is time.
+- Not covered: items that are not treasures (the essences, and a few items the game hands over
+  straight from its code), and the items a shop shows on its counter before you buy.
+
 ### `oracles.tile_palette(i)`
 
 Returns background palette `i` as an array of four colours, or `nil` if there is no picture yet. `i`
@@ -463,7 +497,7 @@ the tileset and every fade as they happen on screen. Sprite palettes are not exp
 
 ## Stable and unstable
 
-The thirteen functions above are the **stable core**, and the reason they can promise that is worth
+The functions above are the **stable core**, and the reason they can promise that is worth
 understanding, because it explains why some obvious-looking additions are not there.
 
 `oracles.rd` takes a **raw address**. Addresses are a property of the game — they are fixed by the
@@ -472,6 +506,8 @@ can move `wEssencesObtained`. So a mod built on `oracles.rd` keeps working throu
 refactoring on our side: there is nothing of ours in the middle to break. The same goes for the
 drawing functions (pixels on a 144-line picture), `oracles.game()`, `oracles.screen()`, the two
 event handlers, and the store. They describe the game and the screen, not our implementation.
+`oracles.swap_treasure` names treasures and rooms by the game's own numbers, so it is stable for the
+same reason.
 
 What is **not** here, and will arrive clearly marked unstable when it does:
 
@@ -479,10 +515,22 @@ What is **not** here, and will arrive clearly marked unstable when it does:
   function names, not the game's data. They move, split and get renamed as the port is worked on, so
   a mod built on them can break on any build. That is exactly why they are a later stage and will be
   marked unstable rather than folded in beside `oracles.rd`.
-- **Writing** memory, or changing what the game does. Mods draw and read today.
+- **Writing** memory. A mod changes the game only through treasure swaps today.
 
-`api=1` is the contract. If a future build ever has to change the meaning of something above, it will
-do it under `api=2` and keep honouring `api=1`, rather than quietly changing what your mod does.
+`api=2` is the contract. It only added functions, for mods that ask for them, so an `api=1` mod runs
+exactly as before. If a future build ever has to change the meaning of something above, it will do it
+under a new `api` and keep honouring the old ones, rather than quietly changing what your mod does.
+
+## Changing the game
+
+A mod whose `mod.ini` has both `api=2` and `changes_game=yes` can swap the item a treasure gives, with
+`oracles.swap_treasure`. Without both lines that function raises an error, so an `api=1` mod can
+never change the game.
+
+This is what a randomizer needs, and it is also enough to ruin a playthrough: give Link the wrong
+item in the wrong place and the game can become impossible to finish. The limits on the function keep
+the app running; they cannot keep the game's own logic happy. Only install mods like this from
+sources you trust, and keep a copy of your save.
 
 ## What a mod can and cannot see
 

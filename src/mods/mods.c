@@ -1,4 +1,5 @@
 #include "mods/mods.h"
+#include "mods/treasures.h"
 #include "mods/api.h"
 #include "mods/sandbox.h"
 #include "lua.h"
@@ -63,6 +64,7 @@ typedef struct {
   char error[MOD_ERROR_LEN]; // "" while enabled is true; the escaped, truncated reason otherwise.
                              // Populated at the same place enabled is set to false, never earlier.
   bool ages, seasons;
+  bool changes_game;    // "changes_game=yes": with api >= 2, may swap treasures and write WRAM
   bool api_present;     // true iff an "api=" line appeared at all
   bool api_parsed;      // true iff that value parsed as a well-defined int (meaningless unless
                         // api_present)
@@ -142,6 +144,48 @@ void mods_set_on_room_change_ref(lua_State *L, int ref) {
   if (active_mod->on_room_change_ref != LUA_NOREF)
     luaL_unref(L, LUA_REGISTRYINDEX, active_mod->on_room_change_ref);
   active_mod->on_room_change_ref = ref;
+}
+
+// The swap table belongs to one mod, named by id: main.lua runs against a copy of its Mod that is
+// only stored in mods[] afterwards, so a pointer would not outlive the load.
+typedef struct { uint8_t group, room, id, subid, new_id, new_subid; } Swap;
+static Swap swaps[MODS_SWAPS_MAX];
+static int swap_count;
+static char swap_owner[MOD_FIELD_LEN];
+
+static bool may_change_game(void) { return active_mod && active_mod->api >= 2 && active_mod->changes_game; }
+
+// A switched-off mod has no effect on the game any more.
+static void drop_effects(const char *id) {
+  if (!strcmp(swap_owner, id)) { swap_count = 0; swap_owner[0] = 0; }
+}
+
+const char *mods_add_swap(int group, int room, int id, int subid, int new_id, int new_subid) {
+  if (!may_change_game()) return "needs api=2 and changes_game=yes in mod.ini";
+  if (swap_owner[0] && strcmp(swap_owner, active_mod->id)) return "another mod already swaps treasures";
+  if (group < 0 || group > 7 || room < 0 || room > 255 || id < 0 || id > 255 || subid < 0 || subid > 255)
+    return "group must be 0-7 and room, id and subid 0-255";
+  if (!mods_treasure_valid(host_seasons, new_id, new_subid)) return "the new treasure is not one of this game's";
+  snprintf(swap_owner, sizeof swap_owner, "%s", active_mod->id);
+  Swap s = {(uint8_t)group, (uint8_t)room, (uint8_t)id, (uint8_t)subid, (uint8_t)new_id, (uint8_t)new_subid};
+  for (int i = 0; i < swap_count; i++)
+    if (swaps[i].group == s.group && swaps[i].room == s.room && swaps[i].id == s.id && swaps[i].subid == s.subid) {
+      swaps[i] = s;
+      return NULL;
+    }
+  if (swap_count == MODS_SWAPS_MAX) return "the swap table is full (512 entries)";
+  swaps[swap_count++] = s;
+  return NULL;
+}
+
+bool mods_treasure_swap(int group, int room, uint8_t id, uint8_t subid, uint8_t *new_id, uint8_t *new_subid) {
+  for (int i = 0; i < swap_count; i++)
+    if (swaps[i].group == group && swaps[i].room == room && swaps[i].id == id && swaps[i].subid == subid) {
+      *new_id = swaps[i].new_id;
+      *new_subid = swaps[i].new_subid;
+      return true;
+    }
+  return false;
 }
 
 const ModOverlay *mods_overlay(void) { return &overlay; }
@@ -254,6 +298,7 @@ static void call_handler(Mod *m, int ref, bool has_arg, int arg) {
     // warns about the truncation on the MinGW target and buries real warnings in noise.
     snprintf(m->error, sizeof m->error, "%.*s", (int)(sizeof m->error - 1), reason);
     m->enabled = false;
+    drop_effects(m->id);
     void *ud = NULL;
     lua_getallocf(m->L, &ud);
     lua_close(m->L);
@@ -416,6 +461,8 @@ static bool read_ini(const char *path, const char *label, Mod *m) {
       bool consumed_all = end != value && *end == 0;
       m->api_parsed = consumed_all && errno != ERANGE && v >= INT_MIN && v <= INT_MAX;
       m->api = m->api_parsed ? (int)v : 0;
+    } else if (!strcmp(key, "changes_game")) {
+      m->changes_game = !strcmp(value, "yes");
     } else if (!strcmp(key, "games")) {
       m->ages = m->seasons = false;
       char buf[256];
@@ -1184,6 +1231,7 @@ static bool run_main_lua(const char *dir, const char *name, Mod *m) {
     // status-line copy. The explicit precision says so to the compiler, which otherwise
     // warns about the truncation on the MinGW target and buries real warnings in noise.
     snprintf(m->error, sizeof m->error, "%.*s", (int)(sizeof m->error - 1), reason);
+    drop_effects(m->id);
     lua_close(L);
     free(a);
     return false;
@@ -1326,6 +1374,8 @@ void mods_shutdown(void) {
   // insurance against ever leaving it pointing at a Mod slot that mods[] is about to reuse.
   last_room = -1;
   active_mod = NULL;
+  swap_count = 0;
+  swap_owner[0] = 0;
   // Task 9: settings rows are session-only by deliberate decision (see mods_setting_count's own
   // comment in mods.h), so they must not outlive the session that registered them either -- the
   // same stale-state class as last_log/last_room above, now a third instance, closed the same

@@ -500,6 +500,14 @@ static int l_load(lua_State *L) {
   return 1;
 }
 
+static int l_swap_treasure(lua_State *L) {
+  int a[6];
+  for (int i = 0; i < 6; i++) a[i] = check_int(L, i + 1);
+  const char *why = mods_add_swap(a[0], a[1], a[2], a[3], a[4], a[5]);
+  if (why) return luaL_error(L, "oracles.swap_treasure: %s", why);
+  return 0;
+}
+
 // The one list of what the API is. MODDING.md must document exactly these. Kept alphabetical so
 // that cross-check can simply walk both lists in order.
 static const luaL_Reg api[] = {
@@ -521,6 +529,7 @@ static const luaL_Reg api[] = {
   {"solidity", l_solidity},
   {"sprites", l_sprites},
   {"store", l_store},
+  {"swap_treasure", l_swap_treasure},
   {"tile_palette", l_tile_palette},
   {NULL, NULL},
 };
