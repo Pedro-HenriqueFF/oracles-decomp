@@ -6,6 +6,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
         with:
@@ -15,7 +16,7 @@ jobs:
         run: python3 tools/lint_game.py
       - name: Install ninja
         run: |
-          if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get update && sudo apt-get install -y ninja-build; else brew install ninja sdl3; fi
+          if [ "$RUNNER_OS" = "Linux" ]; then tools/apt_install.sh ninja-build; else brew install ninja sdl3; fi
       - name: Configure
         # macOS also builds the apps (Homebrew's SDL3), so an app that no longer compiles fails here
         run: |
@@ -32,9 +33,10 @@ jobs:
   # a link error, not a behaviour change.
   windows-cross:
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mingw-w64 ninja-build cmake
+      - run: tools/apt_install.sh mingw-w64 ninja-build cmake
       - name: Thread model
         # Ubuntu's mingw-w64 is win32-model where Homebrew's is posix-model, and that difference is
         # what hides a winpthreads-only symbol (clock_gettime, say) from a cross-build on a dev
