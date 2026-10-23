@@ -7,6 +7,7 @@
 #include "mods/overlay.h"
 #include "mods/picture.h"
 #include "mods/sandbox.h"
+#include "mods/treasures.h"
 #include "ui/ui.h"
 #include <signal.h>
 #include <sys/stat.h>
@@ -4658,6 +4659,18 @@ static void the_picture_scroll_is_the_play_areas_first_line(void) {
   ASSERT_EQ(y, 184);
 }
 
+static void the_treasure_list_matches_the_disassembly(void) {
+  ASSERT_EQ(mods_treasure_subids(false, 0x05), 7);    // Ages' sword subids
+  ASSERT_EQ(mods_treasure_subids(false, 0x01), 4);    // shield
+  ASSERT_EQ(mods_treasure_subids(true, 0x28), 14);    // Seasons' rupees
+  ASSERT_EQ(mods_treasure_subids(false, 0x13), 0);    // a null pointer entry
+  ASSERT(mods_treasure_valid(false, 0x04, 0));        // no subids: subid 0 only
+  ASSERT(!mods_treasure_valid(false, 0x04, 1));
+  ASSERT(!mods_treasure_valid(false, 0x05, 7));
+  ASSERT(!mods_treasure_valid(true, -1, 0));
+  ASSERT(!mods_treasure_valid(true, 0x100, 0));
+}
+
 int main(void) {
   // The alarm handler's _exit(1) skips normal stdio teardown (deliberately: calling atexit
   // handlers or flushing from inside a signal handler is not safe), which means any buffered
@@ -4851,5 +4864,6 @@ int main(void) {
   RUN(camera_leaves_the_room_position_out_outside_play);
   RUN(camera_is_nil_without_a_picture);
   RUN(the_picture_scroll_is_the_play_areas_first_line);
+  RUN(the_treasure_list_matches_the_disassembly);
   return skipped ? 77 : 0;
 }

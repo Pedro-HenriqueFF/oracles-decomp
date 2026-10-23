@@ -161,7 +161,7 @@ if(ORACLES_SDL OR ANDROID)
   endif()
 endif()
 
-add_library(oraclesmods STATIC src/mods/overlay.c src/mods/mods.c src/mods/api.c src/mods/sandbox.c
+add_library(oraclesmods STATIC src/mods/overlay.c src/mods/mods.c src/mods/api.c src/mods/sandbox.c src/mods/treasures.c
   third_party/lua/lapi.c third_party/lua/lauxlib.c third_party/lua/lbaselib.c
   third_party/lua/lcode.c third_party/lua/lcorolib.c third_party/lua/lctype.c third_party/lua/ldblib.c
   third_party/lua/ldebug.c third_party/lua/ldo.c third_party/lua/ldump.c third_party/lua/lfunc.c
