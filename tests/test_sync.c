@@ -114,16 +114,79 @@ static void versions_compare_and_tags_parse(void) {
   ASSERT(update_compare("v1.0.1", "1.0.0") > 0);
   ASSERT(update_compare("v1.10.0", "1.9.3") > 0);               // numbers, not text
   ASSERT(update_compare("v0.9.0", "1.0.0") < 0);
-  char tag[32];
-  ASSERT(update_parse_latest("{\"url\": \"x\", \"tag_name\": \"v1.2.0\", \"name\": \"Oracles 1.2.0\"}", tag, sizeof tag));
-  ASSERT(!strcmp(tag, "v1.2.0"));
-  ASSERT(update_parse_latest("{\"tag_name\":\"v1.3.0\"}", tag, sizeof tag));
-  ASSERT(!strcmp(tag, "v1.3.0"));
-  ASSERT(!update_parse_latest("{\"message\": \"Not Found\"}", tag, sizeof tag));
-  ASSERT(!update_parse_latest("{\"tag_name\": \"v1/../x\"}", tag, sizeof tag));   // it goes into a URL
-  ASSERT(!update_parse_latest("{\"tag_name\": \"v1.0.0", tag, sizeof tag));
-  ASSERT(!update_parse_latest("{\"tag_name\": \"v1.0.0-much-too-long-for-the-buffer\"}", tag, 8));
+  // shaped like GitHub's answer: the release's own name, an uploader, two assets, a body with quotes
+  const char *json =
+      "{\n  \"tag_name\": \"v1.2.0\",\n  \"name\": \"Oracles 1.2.0\",\n  \"assets\": [\n"
+      "    {\"name\": \"Oracles-macOS.dmg\", \"uploader\": {\"login\": \"x\"}, \"size\": 20,\n"
+      "     \"digest\": \"sha256:1111111111111111111111111111111111111111111111111111111111111111\",\n"
+      "     \"browser_download_url\": \"https://github.com/o/r/releases/download/v1.2.0/Oracles-macOS.dmg\"},\n"
+      "    {\"name\": \"Oracles-linux-x86_64.AppImage\", \"uploader\": {\"login\": \"x\"}, \"size\": 10,\n"
+      "     \"digest\": \"sha256:fb7360e01cebca9109e6a9045a326027b66492ad6a90d0a52d35b922896ac860\",\n"
+      "     \"browser_download_url\": \"https://github.com/o/r/releases/download/v1.2.0/Oracles-linux-x86_64.AppImage\"}\n"
+      "  ],\n  \"body\": \"say \\\"name\\\": \\\"Oracles-x.apk\\\"\"\n}";
+  UpdateRelease r;
+  ASSERT(update_parse_latest(json, "Oracles-linux-x86_64.AppImage", &r));
+  ASSERT(!strcmp(r.tag, "v1.2.0"));
+  ASSERT(!strcmp(r.url, "https://github.com/o/r/releases/download/v1.2.0/Oracles-linux-x86_64.AppImage"));
+  ASSERT(!strcmp(r.sha256, "fb7360e01cebca9109e6a9045a326027b66492ad6a90d0a52d35b922896ac860"));
+  ASSERT(update_parse_latest(json, "Oracles-macOS.dmg", &r));
+  ASSERT(!strcmp(r.sha256, "1111111111111111111111111111111111111111111111111111111111111111"));
+  ASSERT(update_parse_latest(json, "Oracles-x.apk", &r));       // only in the body: no file to fetch
+  ASSERT(!strcmp(r.tag, "v1.2.0") && !r.url[0] && !r.sha256[0]);
+  // the digest belongs to its own asset, not the next one's
+  ASSERT(update_parse_latest("{\"tag_name\": \"v1.3.0\", \"assets\": [{\"name\": \"a\"}, {\"name\": \"b\", \"digest\": \"sha256:"
+                             "2222222222222222222222222222222222222222222222222222222222222222\"}]}", "a", &r));
+  ASSERT(!strcmp(r.tag, "v1.3.0") && !r.sha256[0]);
+  ASSERT(!update_parse_latest("{\"message\": \"Not Found\"}", "a", &r));
+  ASSERT(!update_parse_latest("{\"tag_name\": \"v1/../x\"}", "a", &r));   // it goes into a URL
+  ASSERT(!update_parse_latest("{\"tag_name\": \"v1.0.0", "a", &r));
+  ASSERT(!update_parse_latest("{\"tag_name\": \"v1.0.0-much-too-long-for-a-tag\"}", "a", &r));
 }
+
+#ifndef _WIN32
+#include <sys/stat.h>
+#include <unistd.h>
+
+static bool file_is(const char *path, const char *want) {
+  char buf[64] = {0};
+  FILE *f = fopen(path, "rb");
+  size_t n = f ? fread(buf, 1, sizeof buf - 1, f) : 0;
+  if (f) fclose(f);
+  return n == strlen(want) && !memcmp(buf, want, n);
+}
+
+static void installs_replace_the_appimage(void) {
+  char dir[] = "/tmp/oracles-update-XXXXXX", path[64], tmp[80], err[64], sha[65];
+  ASSERT(mkdtemp(dir));
+  snprintf(path, sizeof path, "%s/Oracles.AppImage", dir);
+  snprintf(tmp, sizeof tmp, "%s.new", path);
+  FILE *f = fopen(path, "wb");
+  fputs("old", f);
+  fclose(f);
+  chmod(path, 0700);
+  const uint8_t elf[] = "\x7f" "ELF new";
+  size_t n = sizeof elf - 1;
+  sha256_hex(elf, n, sha);
+  ASSERT(!update_install(path, (const uint8_t *)"<html>", 6, sha, err, sizeof err));   // an error page, not the file
+  ASSERT(!strcmp(err, "not an AppImage"));
+  ASSERT(!update_install(path, elf, n, "0000000000000000000000000000000000000000000000000000000000000000", err, sizeof err));
+  ASSERT(!strcmp(err, "download damaged"));
+  ASSERT(file_is(path, "old"));
+  ASSERT(update_install(path, elf, n, sha, err, sizeof err));
+  ASSERT(file_is(path, "\x7f" "ELF new"));
+  struct stat st;
+  ASSERT(stat(path, &st) == 0 && (st.st_mode & 0777) == 0711);  // its own mode, executable by all
+  ASSERT(access(tmp, F_OK) != 0);
+  chmod(dir, 0500);                                             // a folder the player can't write
+  if (access(dir, W_OK) != 0) {                                 // (root writes anyway)
+    ASSERT(!update_install(path, elf, n, sha, err, sizeof err));
+    ASSERT(file_is(path, "\x7f" "ELF new"));
+  }
+  chmod(dir, 0700);
+  unlink(path);
+  rmdir(dir);
+}
+#endif
 
 int main(void) {
   RUN(sha256_matches_the_standard_vectors);
@@ -133,5 +196,8 @@ int main(void) {
   RUN(codes_normalize);
   RUN(failed_syncs_retry_with_backoff);
   RUN(versions_compare_and_tags_parse);
+#ifndef _WIN32
+  RUN(installs_replace_the_appimage);
+#endif
   return 0;
 }

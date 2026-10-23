@@ -35,6 +35,7 @@
 #include "gui/screens.h"
 #include "platform/sync_client.h"
 #include "platform/haptic.h"
+#include "sync/http.h"
 #include "sync/update.h"
 
 #ifdef __ANDROID__
@@ -1225,39 +1226,101 @@ static bool run_controls(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, c
 
 static bool run_sync(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, const uint8_t *game_rgb);
 
-// A newer release, looked for once at start by a thread. ORACLES_TEST_LATEST=v9.0.0 stands in for
-// GitHub's answer (even on a build without a version), and the download link is printed, not opened.
-static char update_tag[16];
+static void wait_tick(SDL_Renderer *ren, SDL_Texture *tex, const uint8_t *rgb, bool *quit);
+
+// A newer release, looked for once at start by a thread. ORACLES_TEST_RELEASE=<url> asks that URL
+// instead of GitHub (even on a build without a version), and links and the restart are printed
+// instead of opened and done.
+static UpdateRelease update_rel;
 static SDL_AtomicInt update_found;
+static bool update_restart;
+
+static const char *update_test(void) { return getenv("ORACLES_TEST_RELEASE"); }
+
+// Running as an AppImage (the file itself, which the download replaces), else NULL.
+static const char *update_appimage(void) {
+#if !defined(_WIN32) && !defined(__ANDROID__)
+  return getenv("APPIMAGE");
+#else
+  return NULL;
+#endif
+}
 
 static int SDLCALL update_thread(void *data) {
   (void)data;
-  if (update_check(ORACLES_RELEASES, ORACLES_VERSION, update_tag, sizeof update_tag)) SDL_SetAtomicInt(&update_found, 1);
+  char api[256];
+  if (update_test()) snprintf(api, sizeof api, "%s", update_test());
+  else snprintf(api, sizeof api, "https://api.github.com/repos/%s/releases/latest", ORACLES_RELEASES);
+  const char *asset = update_appimage() ? "Oracles-linux-x86_64.AppImage" : RELEASE_ASSET;
+  if (update_check(api, ORACLES_VERSION, asset, &update_rel)) SDL_SetAtomicInt(&update_found, 1);
   return 0;
 }
 
 static void update_start(void) {
-  const char *fake = getenv("ORACLES_TEST_LATEST");
-  if (fake) {
-    snprintf(update_tag, sizeof update_tag, "%s", fake);
-    if (update_compare(update_tag, ORACLES_VERSION) > 0) SDL_SetAtomicInt(&update_found, 1);
-  } else if (ORACLES_VERSION[0]) SDL_DetachThread(SDL_CreateThread(update_thread, "update", NULL));
+  if (ORACLES_VERSION[0] || update_test()) SDL_DetachThread(SDL_CreateThread(update_thread, "update", NULL));
 }
 
 // The Version row's values, and the notice once the thread has found a release.
 static void update_show(void) {
   snprintf(settings.version, sizeof settings.version, "%s", ORACLES_VERSION[0] ? ORACLES_VERSION : "dev");
-  if (SDL_GetAtomicInt(&update_found)) snprintf(settings.update, sizeof settings.update, "%s", update_tag + (update_tag[0] == 'v'));
+  if (SDL_GetAtomicInt(&update_found)) snprintf(settings.update, sizeof settings.update, "%.15s", update_rel.tag + (update_rel.tag[0] == 'v'));
 }
 
 static void update_poll(void) {
   if (!settings.update[0] && SDL_GetAtomicInt(&update_found)) update_show();
 }
 
-static void update_open(void) {
-  char url[256];
-  snprintf(url, sizeof url, "https://github.com/%s/releases/download/%s/%s", ORACLES_RELEASES, update_tag, RELEASE_ASSET);
-  if (getenv("ORACLES_TEST_LATEST")) fprintf(stderr, "open %s\n", url);
+#ifndef _WIN32
+static struct { HttpResponse res; SDL_AtomicInt done; } update_dl;
+
+static int SDLCALL update_download_thread(void *data) {
+  (void)data;
+  http_download(update_rel.url, &update_dl.res);
+  SDL_SetAtomicInt(&update_dl.done, 1);
+  return 0;
+}
+
+// Downloads the release's AppImage over the running one, the wait shown meanwhile. On success the
+// app quits and main starts the new file.
+static bool update_appimage_install(SDL_Renderer *ren, SDL_Texture *tex, const uint8_t *rgb, const char *path) {
+  static char msg[40];
+  snprintf(msg, sizeof msg, "Updating to %s", settings.update);
+  SDL_SetAtomicInt(&update_dl.done, 0);
+  SDL_Thread *t = SDL_CreateThread(update_download_thread, "download", NULL);
+  if (!t) return false;
+  bool quit = false;
+  waiting = msg;
+  while (!SDL_GetAtomicInt(&update_dl.done)) wait_tick(ren, tex, rgb, &quit);
+  waiting = NULL;
+  SDL_WaitThread(t, NULL);
+  HttpResponse *res = &update_dl.res;
+  char err[64] = "";
+  bool ok = res->status == 200 && update_install(path, res->body, res->size, update_rel.sha256, err, sizeof err);
+  if (!ok && !err[0]) snprintf(err, sizeof err, "%s", res->error[0] ? res->error : "download failed");
+  http_response_free(res);
+  if (!ok) {
+    fprintf(stderr, "update failed: %s\n", err);
+    char line[40];
+    snprintf(line, sizeof line, "Update failed: %s", err);
+    show_status(line);
+  }
+  update_restart = ok;
+  if (ok || quit) SDL_PushEvent(&(SDL_Event){.type = SDL_EVENT_QUIT});
+  return ok;
+}
+#endif
+
+// The notice and the Version row: an AppImage updates itself; anything else (or an AppImage that
+// could not) opens this system's file in the release.
+static void update_open(SDL_Renderer *ren, SDL_Texture *tex, const uint8_t *rgb) {
+#ifndef _WIN32
+  const char *appimage = update_appimage();
+  if (appimage && update_rel.url[0] && update_rel.sha256[0] && update_appimage_install(ren, tex, rgb, appimage)) return;
+#endif
+  char url[300];
+  if (update_rel.url[0] && (update_test() || !strncmp(update_rel.url, "https://github.com/", 19))) snprintf(url, sizeof url, "%s", update_rel.url);
+  else snprintf(url, sizeof url, "https://github.com/%s/releases/tag/%s", ORACLES_RELEASES, update_rel.tag);
+  if (update_test()) fprintf(stderr, "open %s\n", url);
   else if (!SDL_OpenURL(url)) fprintf(stderr, "could not open %s: %s\n", url, SDL_GetError());
 }
 
@@ -1290,7 +1353,7 @@ static bool run_settings_page(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *t
       if (a == MENU_BACK) { settings_store(); return true; }
       if (a == MENU_PICK && row == SET_CONTROLS && !run_controls(win, ren, tex, game_rgb)) return false;
       if (a == MENU_PICK && row == SET_SYNC && !run_sync(win, ren, tex, game_rgb)) return false;
-      if (a == MENU_PICK && row == SET_VERSION) update_open();
+      if (a == MENU_PICK && row == SET_VERSION) update_open(ren, tex, game_rgb);
       if (settings.fullscreen != was_full) apply_window_settings(win);
       if (settings.widescreen != was_wide) fit_window_to_picture(win);
       if (audio) SDL_SetAudioStreamGain(audio, volume_gain(false));
@@ -1614,7 +1677,7 @@ static bool run_home(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, const
           if (!run_sync(win, ren, tex, NULL)) return false;
           home_scan(&h, cache);
         }
-        if (sa == MENU_PICK && row == SET_VERSION) update_open();
+        if (sa == MENU_PICK && row == SET_VERSION) update_open(ren, tex, rgb);
         if (settings.fullscreen != was_full) apply_window_settings(win);
         if (settings.widescreen != was_wide) fit_window_to_picture(win);
         apply_game_settings();
@@ -1645,7 +1708,7 @@ static bool run_home(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, const
     home_ui.button = GUI_NONE;
     home_ui.tap.row = home_ui.tap.volume = GUI_NONE;
     present(ren, tex, rgb);
-    if (home_ui.button == GUI_UPDATE) update_open();
+    if (home_ui.button == GUI_UPDATE) update_open(ren, tex, rgb);
     else if (home_ui.button >= 0) push_button(home_ui.button);
     else push_settings_tap(&home_ui.tap);
     oracles_frame_wait();
@@ -2210,8 +2273,11 @@ int main(int argc, char **argv) {
   if (!sync_wait(20000)) fprintf(stderr, "sync still running at exit\n");
   mods_shutdown();
   oracles_close_window(win, window_size);
-  // Restart (after Portable changed): the quit above saved everything; the new run opens the other folder
-  if (restart_tapped && !SDL_CreateProcess((const char *const *)argv, false)) fprintf(stderr, "could not restart: %s\n", SDL_GetError());
+  // Restart (after Portable changed, or on the AppImage an update replaced): the quit above saved
+  // everything; the new run opens the other folder, or is the new version
+  if (update_restart) argv[0] = (char *)update_appimage();
+  if (update_restart && update_test()) fprintf(stderr, "restart %s\n", argv[0]);
+  else if ((restart_tapped || update_restart) && !SDL_CreateProcess((const char *const *)argv, false)) fprintf(stderr, "could not restart: %s\n", SDL_GetError());
   SDL_Quit();
   return status;
 }

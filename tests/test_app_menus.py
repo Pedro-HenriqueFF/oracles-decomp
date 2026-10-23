@@ -4,11 +4,12 @@ cache: install the ROM, boot into file 1, pause, save to slot 1, resume, pause, 
 Settings from the pause menu, lower the volume and bind A to the S key, quit to the launcher (which writes the auto
 state), quit the app; then save slot 1 again with the touch overlay and a tap on the slot's row; then
 play by taps alone: pause, Save state, slot 2, Quit to menu, and start the game from slot 2 on the main menu;
-then, with a newer release out, the download link from the main menu's notice and Settings > Version.
+then, with a newer release out (served from here), the download link from the main menu's notice and
+Settings > Version, and an AppImage replacing itself (or, downloaded damaged, opening the link).
 Haptic ticks (ORACLES_TEST_HAPTICS logs them): one per control pressed and menu tap, none for keys,
 none once settings.ini turns them off.
 usage: test_app_menus.py ORACLES_NATIVE ROM   (exit 77 when the ROM is missing)"""
-import os, subprocess, sys, tempfile
+import hashlib, http.server, json, os, subprocess, sys, tempfile, threading
 
 app, rom = sys.argv[1], sys.argv[2]
 if not os.path.exists(rom): print('skip: ROM not present'); sys.exit(77)
@@ -69,12 +70,43 @@ with tempfile.TemporaryDirectory() as cache:
     assert 'test tap: no' not in r.stderr, r.stderr
     assert 'haptic' not in r.stderr, f'ticks with haptics=off; stderr: {r.stderr}'
     assert 'haptics=off' in open(os.path.join(cache, 'settings.ini')).read()
-    # a newer release (ORACLES_TEST_LATEST stands in for GitHub's answer): the main menu's notice
-    # and the last settings row both give the download link, printed instead of opened
+    # a newer release, served from here (ORACLES_TEST_RELEASE stands in for GitHub's API): the main
+    # menu's notice and the last settings row both give this system's file, printed instead of opened
+    srv = os.path.join(cache, 'srv')
+    os.mkdir(srv)
+    class Quiet(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *a, **k): super().__init__(*a, directory=srv, **k)
+        def log_message(self, *a): pass
+    server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Quiet)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f'http://127.0.0.1:{server.server_address[1]}/'
+    new = b'\x7fELF the next version'
+    files = {'Oracles-macOS.dmg': b'dmg', 'Oracles-windows-x64.zip': b'zip', 'Oracles-linux-x86_64.AppImage': new, 'Oracles-android.apk': b'apk'}
+    def release(name, digest_of):
+        assets = [{'name': n, 'digest': 'sha256:' + hashlib.sha256(digest_of(n, b)).hexdigest(), 'browser_download_url': base + n} for n, b in files.items()]
+        with open(os.path.join(srv, name), 'w') as f: json.dump({'tag_name': 'v9.0.0', 'name': 'Oracles 9.0.0', 'assets': assets}, f)
+        return base + name
+    for n, b in files.items():
+        with open(os.path.join(srv, n), 'wb') as f: f.write(b)
+    good, bad = release('latest.json', lambda n, b: b), release('bad.json', lambda n, b: b + b'!')
     keys = '100:^Update,130:Right,140:Down,150:Up,160:X,190:Z,200:Z'
-    r = subprocess.run([app, '--cache', cache], env=dict(env, ORACLES_TOUCH='1', ORACLES_TEST_KEYS=keys, ORACLES_TEST_LATEST='v9.0.0'), capture_output=True, text=True, timeout=120)
+    r = subprocess.run([app, '--cache', cache], env=dict(env, ORACLES_TOUCH='1', ORACLES_TEST_KEYS=keys, ORACLES_TEST_RELEASE=good), capture_output=True, text=True, timeout=120)
     assert r.returncode == 0, r.stderr
     assert 'test tap: no' not in r.stderr, r.stderr
-    link = 'open https://github.com/kirby-letsgo/oracles-decomp/releases/download/v9.0.0/Oracles-'
-    assert r.stderr.count(link) == 2, f'expected the notice and the Version row to open the download; stderr: {r.stderr}'
+    assert r.stderr.count('open ' + base + 'Oracles-') == 2, f'expected the notice and the Version row to open the download; stderr: {r.stderr}'
+    # an AppImage replaces itself with the release's and restarts on it; a damaged download leaves
+    # it as it was and opens the link instead
+    appimage = os.path.join(cache, 'Oracles.AppImage')
+    for latest, keys in ((bad, '100:^Update,200:Z'), (good, '100:^Update,400:Z')):
+        with open(appimage, 'wb') as f: f.write(b'old')
+        r = subprocess.run([app, '--cache', cache], env=dict(env, ORACLES_TOUCH='1', ORACLES_TEST_KEYS=keys, ORACLES_TEST_RELEASE=latest, APPIMAGE=appimage), capture_output=True, text=True, timeout=120)
+        assert r.returncode == 0, r.stderr
+        assert 'test tap: no' not in r.stderr, r.stderr
+        if latest == bad:
+            assert 'update failed: download damaged' in r.stderr and 'open ' + base + 'Oracles-linux-x86_64.AppImage' in r.stderr, r.stderr
+            assert open(appimage, 'rb').read() == b'old', 'a damaged download replaced the AppImage'
+        else:
+            assert 'restart ' + appimage in r.stderr, f'no restart on the new AppImage; stderr: {r.stderr}'
+            assert open(appimage, 'rb').read() == new and os.access(appimage, os.X_OK), 'the AppImage was not replaced'
+    server.shutdown()
 print('ok app_menus')

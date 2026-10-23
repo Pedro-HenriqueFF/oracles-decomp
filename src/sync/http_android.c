@@ -79,3 +79,5 @@ done:
   (*env)->PopLocalFrame(env, NULL);
   return ok;
 }
+
+bool http_download(const char *url, HttpResponse *res) { return http_request("GET", url, NULL, NULL, 0, res); }
