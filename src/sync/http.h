@@ -15,6 +15,8 @@ typedef struct {
 
 // headers: "Name: value\n" lines (or NULL); body may be NULL.
 bool http_request(const char *method, const char *url, const char *headers, const uint8_t *body, size_t size, HttpResponse *res);
+// A GET that may take minutes (a release's file): gives up only when it stalls for 30 seconds.
+bool http_download(const char *url, HttpResponse *res);
 void http_response_free(HttpResponse *res);
 // A response header's value (name lower-case), or NULL.
 const char *http_header(const HttpResponse *res, const char *name, char *out, size_t size);

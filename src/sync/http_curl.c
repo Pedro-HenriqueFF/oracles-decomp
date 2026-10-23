@@ -9,10 +9,11 @@
 void http_add_header(HttpResponse *res, const char *line, size_t len);
 
 enum {
-  OPT_WRITEDATA = 10001, OPT_URL = 10002, OPT_POSTFIELDS = 10015, OPT_HTTPHEADER = 10023,
+  OPT_WRITEDATA = 10001, OPT_URL = 10002, OPT_POSTFIELDS = 10015, OPT_HTTPHEADER = 10023, OPT_USERAGENT = 10018,
   OPT_HEADERDATA = 10029, OPT_CUSTOMREQUEST = 10036, OPT_WRITEFUNCTION = 20011,
   OPT_HEADERFUNCTION = 20079, OPT_POSTFIELDSIZE_LARGE = 30120, OPT_TIMEOUT = 13, OPT_NOSIGNAL = 99,
-  OPT_FOLLOWLOCATION = 52, INFO_RESPONSE_CODE = 0x200002,
+  OPT_FOLLOWLOCATION = 52, OPT_LOW_SPEED_LIMIT = 19, OPT_LOW_SPEED_TIME = 20, OPT_CONNECTTIMEOUT = 78,
+  INFO_RESPONSE_CODE = 0x200002,
 };
 
 static struct {
@@ -66,7 +67,7 @@ static size_t on_header(char *data, size_t size, size_t n, void *ctx) {
   return size * n;
 }
 
-bool http_request(const char *method, const char *url, const char *headers, const uint8_t *body, size_t size, HttpResponse *res) {
+static bool perform(const char *method, const char *url, const char *headers, const uint8_t *body, size_t size, bool long_transfer, HttpResponse *res) {
   memset(res, 0, sizeof *res);
   if (!load()) { snprintf(res->error, sizeof res->error, "libcurl is not installed"); return false; }
   void *c = curl.easy_init();
@@ -81,8 +82,13 @@ bool http_request(const char *method, const char *url, const char *headers, cons
   }
   curl.easy_setopt(c, OPT_URL, url);
   curl.easy_setopt(c, OPT_CUSTOMREQUEST, method);
+  curl.easy_setopt(c, OPT_USERAGENT, "Oracles");
   curl.easy_setopt(c, OPT_NOSIGNAL, 1L);
-  curl.easy_setopt(c, OPT_TIMEOUT, 30L);
+  if (long_transfer) {
+    curl.easy_setopt(c, OPT_CONNECTTIMEOUT, 30L);
+    curl.easy_setopt(c, OPT_LOW_SPEED_LIMIT, 1L);
+    curl.easy_setopt(c, OPT_LOW_SPEED_TIME, 30L);
+  } else curl.easy_setopt(c, OPT_TIMEOUT, 30L);
   curl.easy_setopt(c, OPT_FOLLOWLOCATION, 1L);
   if (list) curl.easy_setopt(c, OPT_HTTPHEADER, list);
   if (body) {
@@ -102,3 +108,9 @@ bool http_request(const char *method, const char *url, const char *headers, cons
   curl.easy_cleanup(c);
   return rc == 0;
 }
+
+bool http_request(const char *method, const char *url, const char *headers, const uint8_t *body, size_t size, HttpResponse *res) {
+  return perform(method, url, headers, body, size, false, res);
+}
+
+bool http_download(const char *url, HttpResponse *res) { return perform("GET", url, NULL, NULL, 0, true, res); }

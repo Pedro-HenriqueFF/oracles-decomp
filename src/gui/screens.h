@@ -21,6 +21,7 @@ typedef struct {
 
 #define GUI_NONE (-1)
 #define GUI_BACK (-2)
+#define GUI_UPDATE (-3)
 
 // The pause menu over the dimmed game, inside the game picture. Returns the PauseItem tapped.
 int gui_pause(PauseMenu *m, const GuiTheme *t, const GuiFrame *f);
@@ -35,7 +36,8 @@ typedef struct { int row; UiButton button; int volume; } GuiSettingsTap;
 // The settings page from the pause menu. Returns true when Back was tapped.
 bool gui_settings(SettingsMenu *m, const Settings *s, const char *sync_label, const GuiTheme *t, const GuiFrame *f, GuiSettingsTap *tap);
 // The main menu (with the settings list on its settings tab). A tap moves the selection (or changes
-// tab) and returns the button it amounts to (UI_ACCEPT, UI_BACK), or GUI_NONE; settings rows report in tap.
+// tab) and returns the button it amounts to (UI_ACCEPT, UI_BACK), GUI_UPDATE for the newer release's
+// notice (s->update), or GUI_NONE; settings rows report in tap.
 int gui_home(Home *h, const GuiTheme *t, const GuiFrame *f, SettingsMenu *sm, const Settings *s, const char *sync_label, GuiSettingsTap *tap);
 // Key and pad bindings. A row tap returns the row; *page is set to the tab tapped (0 keyboard,
 // 1 gamepad) or -1. GUI_BACK for Back.

@@ -29,11 +29,13 @@ typedef struct {
   Bindings bindings;
   char sync_label[12];          // the SYNC row's value, kept by the app (sync.ini, not settings.ini)
   bool portable;                // portable.txt beside the app, kept by the app (not settings.ini)
+  char version[16];             // this build's release, "dev" for a local build; kept by the app
+  char update[16];              // a newer release to download, or empty; kept by the app
 } Settings;
 
 enum { FF_SPEED_MIN = 2, FF_SPEED_MAX = 8, FF_SPEEDS = FF_SPEED_MAX - FF_SPEED_MIN + 1 };
 
-typedef enum { SET_VOLUME, SET_SCREEN, SET_SCALE, SET_WIDESCREEN, SET_DIM_SIDES, SET_COLOURS, SET_FULLSCREEN, SET_FAST_TEXT, SET_FAST_MENUS, SET_FF_SPEED, SET_QUICK_SWAP, SET_FOUR_SLOTS, SET_HAPTICS, SET_CONTROLS, SET_PAD_STYLE, SET_SYNC, SET_PORTABLE, SET_ROWS } SettingsRow;
+typedef enum { SET_VOLUME, SET_SCREEN, SET_SCALE, SET_WIDESCREEN, SET_DIM_SIDES, SET_COLOURS, SET_FULLSCREEN, SET_FAST_TEXT, SET_FAST_MENUS, SET_FF_SPEED, SET_QUICK_SWAP, SET_FOUR_SLOTS, SET_HAPTICS, SET_CONTROLS, SET_PAD_STYLE, SET_SYNC, SET_PORTABLE, SET_VERSION, SET_ROWS } SettingsRow;
 
 typedef struct {
   SettingsRow sel;
@@ -51,5 +53,6 @@ int settings_format(const Settings *s, char *out, size_t size);
 void settings_menu_open(SettingsMenu *m, bool phone);
 // The row is in the list (SET_HAPTICS only on a phone, SET_FULLSCREEN and SET_PORTABLE never); keys skip the others.
 bool settings_row_shown(const SettingsMenu *m, SettingsRow r);
-// Left/right change the highlighted value in s; accept on CONTROLS or SYNC returns MENU_PICK with that row.
+// Left/right change the highlighted value in s; accept on CONTROLS or SYNC, or on VERSION with an
+// update to download, returns MENU_PICK with that row.
 MenuAction settings_press(SettingsMenu *m, Settings *s, UiButton b, SettingsRow *picked);

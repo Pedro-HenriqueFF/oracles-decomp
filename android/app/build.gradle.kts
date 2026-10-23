@@ -15,7 +15,8 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = (System.getenv("ORACLES_VERSION_CODE") ?: "1").toInt()
-        versionName = System.getenv("ORACLES_VERSION_NAME") ?: "0.5"
+        // the release workflow passes VERSION (1.2.0); a local build has none and never checks for updates
+        versionName = (System.getenv("ORACLES_VERSION") ?: "").removePrefix("v").ifEmpty { "dev" }
         ndk {
             abiFilters += "arm64-v8a"
         }
@@ -26,6 +27,7 @@ android {
                 // 16 KB pages (Android 15+ phones may use them): Android won't install an app whose
                 // native code is aligned for 4 KB only; NDK 28 makes this the default
                 arguments += "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON"
+                arguments += "-DORACLES_VERSION=${System.getenv("ORACLES_VERSION") ?: ""}"
                 targets += "main"
             }
         }
