@@ -62,20 +62,15 @@ sequence is held for several frames at a time, so the OR'd version still drives 
 naming screen and short walk, just not frame-perfect.
 
 usage: test_mods_room.py ORACLES_NATIVE ROM TAS_INPUTS   (exit 77 when either is missing)"""
-import os, subprocess, struct, sys, tempfile
+import os, subprocess, sys, tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from movie_keys import movie_keys
 
 app, rom, tas_path = sys.argv[1], sys.argv[2], sys.argv[3]
 if not os.path.exists(rom) or not os.path.exists(tas_path):
     print('skip: ROM or TAS inputs not present')
     sys.exit(77)
-
-with open(tas_path, 'rb') as f:
-    data = f.read()
-if data[:4] != b'ORIN':
-    print('skip: unrecognised TAS inputs format')
-    sys.exit(77)
-count = struct.unpack('<I', data[4:8])[0]
-inputs = data[8:8 + count]
 
 # 9500, not just enough to leave the starting room (~1881): confirmed empirically, wRoomWidth/
 # wRoomHeight read back 0 (not yet populated) for the whole movie until somewhere before frame
@@ -87,26 +82,11 @@ inputs = data[8:8 + count]
 # room group, separately, is NOT observed to become non-zero anywhere in this movie's first
 # ~33,400 frames (see this file's own "KNOWN, DOCUMENTED GAP" paragraph above), so extending
 # NFRAMES further would cost real minutes without closing that particular gap.
-NFRAMES = min(9500, count)
-GROUP = 4  # matches fast mode's 4-real-frames-per-tick
-
-# GB joypad bit -> SDL key name, via this app's default bindings (src/ui/controls.c): A=X, B=Z,
-# Right/Left/Up/Down = arrow keys, Start=Return. Select is never used by the opening sequence.
-NAMES = ['X', 'Z', None, 'Return', 'Right', 'Left', 'Up', 'Down']
-
-entries = []
-nticks = (NFRAMES + GROUP - 1) // GROUP
-for t in range(1, nticks + 2):
-    entries.append(f'{t}:Tab')               # hold FAST the whole time
-for tk in range(nticks):
-    agg = 0
-    for f in range(tk * GROUP, min((tk + 1) * GROUP, NFRAMES)):
-        agg |= inputs[f]
-    tick = tk + 1
-    for k in range(8):
-        if (agg >> k) & 1 and NAMES[k]:
-            entries.append(f'{tick}:{NAMES[k]}')
-keys = ','.join(entries)
+got = movie_keys(tas_path, 9500)
+if got is None:
+    print('skip: unrecognised TAS inputs format')
+    sys.exit(77)
+keys, NFRAMES = got
 
 env = dict(os.environ, SDL_VIDEO_DRIVER='dummy', SDL_AUDIO_DRIVER='dummy')
 with tempfile.TemporaryDirectory() as cache:

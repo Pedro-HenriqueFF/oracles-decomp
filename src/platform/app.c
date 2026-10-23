@@ -944,6 +944,7 @@ static void present_game(SDL_Renderer *ren, const GBSample *sample, const uint8_
   ModsFrame mf = {
     .wram = sample->wram[0],
     .wram3 = sample->wram[3],
+    .wram1 = sample->wram[1],
     .hram = sample->hram,
     .seasons = seasons,
     .width = settings.widescreen ? WIDE_W : FB_W,
@@ -965,6 +966,13 @@ static void present_game(SDL_Renderer *ren, const GBSample *sample, const uint8_
   };
   mods_frame(&mf);
   show_game(ren, sample, rgb, seasons, rom, rom_size);
+}
+
+// What mods wrote with oracles.wr this frame, between frames as the headless POKE does.
+static void apply_mod_writes(GB *gb) {
+  ModWrite w[MODS_WRITES_MAX];
+  int n = mods_take_writes(w, MODS_WRITES_MAX);
+  for (int i = 0; i < n; i++) gb->wram[w[i].addr >> 12 & 1][w[i].addr & 0xfff] = w[i].value;
 }
 
 // A 160-wide picture (a menu, or the game where the sides are not drawn): with the current message,
@@ -1911,6 +1919,7 @@ static GameEnd run_game(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, co
   char mods_dir[1200];
   snprintf(mods_dir, sizeof mods_dir, "%smods", app_cache);
   mods_init(mods_dir, !ages);
+  features.treasure_swap = mods_treasure_swap;
   // Tracks only true->false transitions below, so the player sees a status line the moment a mod
   // fails -- whether that's immediately (a bad main.lua) or frames into play (a runaway handler)
   // -- without repeating it every subsequent frame the same mod stays disabled.
@@ -2125,6 +2134,7 @@ static GameEnd run_game(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, co
     if (audio && mode == MODE_PLAY) SDL_PutAudioStreamData(audio, samples, n * 4);
     framebuffer_to_rgb(gb->sample->framebuffer, rgb);
     present_game(ren, gb->sample, rgb, !ages, rom, rom_size);
+    apply_mod_writes(gb);
     for (int i = 0; i < mod_count; i++) {
       bool now = mods_enabled(i);
       if (mod_was_enabled[i] && !now) show_status("Mod disabled");
@@ -2147,6 +2157,7 @@ static GameEnd run_game(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, co
   // against this game) for as long as the launcher happens to sit idle, or for a different game
   // entirely if the player picks one next. main()'s loop re-scans game-agnostically before the
   // launcher is shown again, and the next run_game re-inits for whichever game is actually picked.
+  features.treasure_swap = NULL;
   mods_shutdown();
   paused_game.gb = NULL;
   wide_npcs_stop();

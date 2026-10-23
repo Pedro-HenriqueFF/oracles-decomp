@@ -310,6 +310,9 @@ if(ORACLES_SDL)
   add_test(NAME mods_room COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/test_mods_room.py $<TARGET_FILE:oracles-native>
     "${GAME_ROM_DIR}/Legend of Zelda, The - Oracle of Seasons (USA, Australia).gbc" "${CMAKE_SOURCE_DIR}/tas/seasons-play.inputs")
   set_tests_properties(mods_room PROPERTIES SKIP_RETURN_CODE 77 LABELS "rom" TIMEOUT 240)
+  add_test(NAME mods_api2 COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/test_mods_api2.py $<TARGET_FILE:oracles-native>
+    "${GAME_ROM_DIR}/Legend of Zelda, The - Oracle of Seasons (USA, Australia).gbc" "${CMAKE_SOURCE_DIR}/tas/seasons-play.inputs")
+  set_tests_properties(mods_api2 PROPERTIES SKIP_RETURN_CODE 77 LABELS "rom" TIMEOUT 240)
 endif()
 add_test(NAME native_binary COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/check_native_binary.py $<TARGET_FILE:oraclesnative> ${NATIVE_BINARIES})
 
