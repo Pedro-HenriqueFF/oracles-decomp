@@ -475,6 +475,37 @@ static void seasons_map_has_no_status_bar(void) {
   ASSERT_EQ(c.differ, 0);
 }
 
+// Taking an essence (#34, the reporter's Ages state: the vision that follows) keeps the split on but
+// turns the whole status bar one colour, the game's own B and A items with it, so X and Y must not
+// stay over the scene either. A bar with anything on it keeps them. No ROM needed: the letters and
+// brackets are drawn even with no item to show.
+static bool slots_drawn(const uint8_t *out) {
+  for (int y = 0; y < 16; y++)
+    for (int x = 0; x < WIDE_SIDE; x++)
+      if (memcmp(out + ((size_t)y * WIDE_W + x) * 3, out, 3)) return true;
+  return false;
+}
+
+static void blanked_bar_has_no_x_and_y(void) {
+  static GBSample s;
+  static uint8_t out[WIDE_W * FB_H * 3], strip[WIDE_BOX_W * FB_H * 3];
+  memset(&s, 0, sizeof s);
+  s.hram[0xff9b - 0xff80] = 3;                          // Ages' LCD behaviour: the status bar's split
+  s.wram[0][0xd00] = 0x01;                              // wScrollMode: normal play
+  for (int y = 0; y < FB_H; y++) s.line_lcdc[y] = y < 16 ? 0xc7 : 0xe7;
+  s.drawn_bg_pal[0][6] = 0xff;                          // BG palette 0 colour 3, the bar's text: white
+  s.drawn_bg_pal[0][7] = 0x7f;
+  WideOptions o = {false, false, {0, 0, 0}, NULL, 0, true, {0, 0}, NULL, {0}};
+  wide_render(&s, &o, out);
+  ASSERT(!slots_drawn(out));
+  ASSERT(!wide_slot_strip(&s, &o, 0, false, strip));
+  ASSERT(!wide_slot_strip(&s, &o, 1, true, strip));
+  s.framebuffer[40] = 0x7fff;                           // one pixel of the bar drawn
+  wide_render(&s, &o, out);
+  ASSERT(slots_drawn(out));
+  ASSERT(wide_slot_strip(&s, &o, 0, false, strip));
+}
+
 // Scenes over the whole screen (#14: Ages' ending and credits; here Seasons' opening) keep the
 // status bar's split behaviour with wGfxRegsFinal.LYC past the last line, so the game never draws
 // the bar: no X and Y boxes, no room strips, and the top lines stay the scene's own, blank frames
@@ -642,6 +673,7 @@ int main(void) {
     RUN(seasons_room_pixels_match_the_ppu);
     RUN(ages_room_pixels_match_the_ppu);
   }
+  RUN(blanked_bar_has_no_x_and_y);
   RUN(seasons_play_origin_follows_the_camera);
   RUN(ages_play_origin_follows_the_camera);
   RUN(item_icons_decode_from_the_rom);

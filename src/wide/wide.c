@@ -458,8 +458,16 @@ enum { SLOT_LETTER_TOP = 1 };
 
 typedef struct { bool show; bool on[2]; WideItemIcon icon[2]; int x[2]; } SlotIcons;
 
+// Some scenes (taking an essence, and the end of a fade) keep the split on but turn the whole bar
+// one colour, the game's B and A items with it: X and Y go too, or they would hang over the scene.
+static bool bar_blank(const GBSample *s) {
+  for (int i = 1; i < FB_W * STATUS_BAR_LINES; i++)
+    if (s->framebuffer[i] != s->framebuffer[0]) return false;
+  return true;
+}
+
 static void slot_icons(const GBSample *s, const WideOptions *o, SlotIcons *si) {
-  si->show = o->slots;
+  si->show = o->slots && !bar_blank(s);
   for (int i = 0; i < 2; i++) {
     si->on[i] = o->slots && o->rom && o->slot_item[i] &&
                 wide_item_icon(o->rom, o->rom_size, o->seasons, o->slot_item[i], &s->wram[0][0x600], &si->icon[i]);
@@ -512,7 +520,7 @@ enum { STRIP_LETTER_X = 5, STRIP_ICON_TOP = 9, STRIP_H = STRIP_ICON_TOP + 17 };
 
 bool wide_slot_strip(const GBSample *s, const WideOptions *o, int slot, bool box, uint8_t *out) {
   const GameRam *r = o->seasons ? &seasons_ram : &ages_ram;
-  if (!o->slots || !bar_up(s, r)) return false;
+  if (!o->slots || !bar_up(s, r) || bar_blank(s)) return false;
   int w = box ? WIDE_BOX_W : WIDE_STRIP_W;
   memset(out, 0, (size_t)w * FB_H * 3);
   if (box) {

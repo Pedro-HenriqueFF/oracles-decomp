@@ -38,7 +38,7 @@ enum { WIDE_STRIP_W = 16, WIDE_BOX_W = 38 };
 // Item X/Y beside the narrow picture: slot 0 (X) or 1 (Y) as an RGB24 strip FB_H tall, either the
 // widescreen box (WIDE_BOX_W wide, as tall as the status bar) or, where that does not fit, the
 // letter above the icon (WIDE_STRIP_W wide). False (out untouched) unless o->slots is on and the
-// status bar is up.
+// status bar is up and not blanked to one colour.
 bool wide_slot_strip(const GBSample *s, const WideOptions *o, int slot, bool box, uint8_t *out);
 // The room's background pixel (RGB555) at screen (x, y), x from -48 to 207, or -1 where the room is
 // not shown there. Inside 0-159 it matches the PPU's background wherever no sprite covers it.
