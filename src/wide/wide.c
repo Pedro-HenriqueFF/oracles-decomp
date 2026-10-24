@@ -458,11 +458,28 @@ enum { SLOT_LETTER_TOP = 1 };
 
 typedef struct { bool show; bool on[2]; WideItemIcon icon[2]; int x[2]; } SlotIcons;
 
-// Some scenes (taking an essence, and the end of a fade) keep the split on but turn the whole bar
-// one colour, the game's B and A items with it: X and Y go too, or they would hang over the scene.
+// Some scenes (taking an essence or the harp, and the end of a fade) keep the split on but turn the
+// whole bar one colour and take the game's B and A items away: X and Y go too, or they would hang
+// over the scene. The scene's own sprites can reach into the bar's lines (the harp Link holds up
+// over the darkened room), so pixels a sprite covers do not count.
 static bool bar_blank(const GBSample *s) {
-  for (int i = 1; i < FB_W * STATUS_BAR_LINES; i++)
-    if (s->framebuffer[i] != s->framebuffer[0]) return false;
+  static SpriteLine sprites;
+  int paper = -1;
+  for (int y = 0; y < STATUS_BAR_LINES; y++) {
+    int d = s->line_drawn[y];
+    for (int x = 0; x < WIDE_W; x++) sprites.c[x] = -1;
+    if (s->line_lcdc[y] & 0x02)
+      for (int i = 0; i < 40; i++) {
+        const uint8_t *e = &s->drawn_oam[d][i * 4];
+        sprite_line_put(s, d, e[1] - 8, e[0] - 16, e[2], e[3], y, true, &sprites);
+      }
+    for (int x = 0; x < FB_W; x++) {
+      if (sprites.c[WIDE_SIDE + x] >= 0) continue;
+      int c = s->framebuffer[y * FB_W + x];
+      if (paper < 0) paper = c;
+      else if (c != paper) return false;
+    }
+  }
   return true;
 }
 

@@ -500,6 +500,16 @@ static void blanked_bar_has_no_x_and_y(void) {
   ASSERT(!slots_drawn(out));
   ASSERT(!wide_slot_strip(&s, &o, 0, false, strip));
   ASSERT(!wide_slot_strip(&s, &o, 1, true, strip));
+  // the scene's own sprite reaching into the bar's lines (#34: the harp held up over a dark room)
+  s.drawn_oam[0][0] = 16 + 10;
+  s.drawn_oam[0][1] = 8 + 90;
+  s.drawn_oam[0][2] = 0x02;
+  memset(&s.drawn_vram[0][0][0x02 * 16], 0xff, 32);
+  for (int y = 10; y < 16; y++)
+    for (int x = 90; x < 98; x++) s.framebuffer[y * FB_W + x] = 0x001f;
+  wide_render(&s, &o, out);
+  ASSERT(!slots_drawn(out));
+  ASSERT(!wide_slot_strip(&s, &o, 0, false, strip));
   s.framebuffer[40] = 0x7fff;                           // one pixel of the bar drawn
   wide_render(&s, &o, out);
   ASSERT(slots_drawn(out));
