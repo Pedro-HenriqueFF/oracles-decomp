@@ -184,6 +184,33 @@ Volume has **−** and **+** either side of its bars, and tapping a bar jumps to
 
 Leaving the app saves the game and a Resume state; coming back opens the pause menu.
 
+## Starting a game directly (frontends)
+
+To skip the main menu, for example to give each game its own entry in a frontend (ES-DE,
+LaunchBox, Playnite, RetroBat, Steam's non-Steam games...), start the app with `--game`:
+
+| System | Oracle of Ages | Oracle of Seasons |
+|---|---|---|
+| Windows | `Oracles.exe --game ages` | `Oracles.exe --game seasons` |
+| Linux | `Oracles-linux-x86_64.AppImage --game ages` | `Oracles-linux-x86_64.AppImage --game seasons` |
+| macOS | `Oracles.app/Contents/MacOS/Oracles --game ages` | `Oracles.app/Contents/MacOS/Oracles --game seasons` |
+
+Add the ROMs once from the main menu first; `--game` exits with a message when the game's ROM hasn't
+been added. The game starts at its title screen, with your settings, saves and save states as usual,
+and **Settings** is in the pause menu (Esc). Closing the window quits; **Quit to menu** opens the
+main menu.
+
+More options:
+
+- `--file 1` (to `3`) boots straight into that save file.
+- `--game ages-eu` (or `seasons-eu`) picks the European ROM when you have added both releases of a
+  game; plain `ages`/`seasons` starts the one the game's tab starts.
+- `--cache DIR` keeps everything (ROMs, saves, settings) in that folder instead of the usual one, as
+  [Portable](#portable-mode) mode does.
+
+On macOS, `open -a Oracles --args --game ages` works too, but only when Oracles isn't already open.
+Android has no command line, so the app always opens on its main menu there.
+
 ## Where your files are
 
 Everything — the data read from your ROM, your saves, save states and settings — lives in one
