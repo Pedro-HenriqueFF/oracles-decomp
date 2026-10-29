@@ -15,3 +15,9 @@ tas/*.inputs.state
 *.savestate
 build-win/
 .worktrees/
+
+# Local development files
+.venv/
+CMakeUserPresets.json
+compile_commands.json
+*.sav
