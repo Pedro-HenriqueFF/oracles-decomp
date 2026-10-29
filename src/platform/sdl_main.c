@@ -247,7 +247,7 @@ int main(int argc, char **argv) {
       case SDL_EVENT_QUIT: running = false; break;
       case SDL_EVENT_KEY_DOWN:
         if (oracles_window_key(win, &ev.key)) break;
-        if ((ev.key.mod & SDL_KMOD_GUI) && (ev.key.scancode == SDL_SCANCODE_S || ev.key.scancode == SDL_SCANCODE_R)) {
+        if ((ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) && (ev.key.scancode == SDL_SCANCODE_S || ev.key.scancode == SDL_SCANCODE_R)) {
           if (ev.key.repeat) break;
           char path[1024];
           savestate_path(argv[1], path, sizeof path);

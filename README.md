@@ -95,9 +95,9 @@ keyboard, a controller, the mouse, or by tapping its rows.
 | Item X / Item Y | `A` / `S` | Y / Triangle, B / Circle |
 | Mute | `M` | |
 | Fullscreen | F11 or Cmd+F | |
-| Save / load state slot 1 | Cmd+S / Cmd+R | |
+| Save / load state slot 1 | Cmd+S / Cmd+R, or Ctrl+S / Ctrl+R | L3 / R3 |
 
-Every button, including Pause, Fast-forward, Swap and the item buttons, can be remapped in
+Every button, including Pause, Fast-forward, Swap, the item buttons and save / load state, can be remapped in
 Settings > CONTROLS: pick a row, then press the key or controller button (triggers included) you
 want for it. Quick swap and the item buttons only do something once their gameplay toggles are on.
 The window resizes in whole-pixel steps.
@@ -129,7 +129,8 @@ There are also quality-of-life toggles, **all off by default**:
 
 Esc pauses the game: Resume, Save state, Load state (4 slots, each with a thumbnail and the time
 it was saved, to the second) and Quit to menu, which saves a Resume state and returns to the main
-menu. Cmd+S and Cmd+R are shortcuts for slot 1. Messages like *Saved to slot 2* or *Sound off*
+menu. Cmd+S and Cmd+R (Ctrl+S and Ctrl+R on Windows and Linux), or L3 and R3 on a controller,
+are shortcuts for slot 1. Messages like *Saved to slot 2* or *Sound off*
 appear at the bottom of the picture; after a save the message offers **Undo**, which puts back what
 the slot held before.
 

@@ -5,13 +5,14 @@
 
 // SDL scancodes: UP 82, DOWN 81, LEFT 80, RIGHT 79, X 27, Z 29, RETURN 40, ESCAPE 41, BACKSPACE 42,
 // TAB 43, RSHIFT 229, C 6, A 4, S 22. SDL gamepad buttons: SOUTH 0, EAST 1, WEST 2, NORTH 3, BACK 4,
-// GUIDE 5, START 6, LEFT_SHOULDER 9, DPAD 11-14.
+// GUIDE 5, START 6, LEFT_STICK 7, RIGHT_STICK 8, LEFT_SHOULDER 9, DPAD 11-14. Save and load state have
+// no keys of their own: Cmd/Ctrl+S and Cmd/Ctrl+R are theirs as well.
 static const int default_keys[ACTIONS][KEYS_PER_ACTION] = {
   {82, NO_BINDING}, {81, NO_BINDING}, {80, NO_BINDING}, {79, NO_BINDING}, {27, NO_BINDING},
   {29, NO_BINDING}, {40, NO_BINDING}, {42, 229}, {41, NO_BINDING}, {43, NO_BINDING}, {6, NO_BINDING},
-  {4, NO_BINDING}, {22, NO_BINDING},
+  {4, NO_BINDING}, {22, NO_BINDING}, {NO_BINDING, NO_BINDING}, {NO_BINDING, NO_BINDING},
 };
-static const int default_pads[ACTIONS] = {11, 12, 13, 14, 0, 2, 6, 4, 5, PAD_RIGHT_TRIGGER, 9, 3, 1};
+static const int default_pads[ACTIONS] = {11, 12, 13, 14, 0, 2, 6, 4, 5, PAD_RIGHT_TRIGGER, 9, 3, 1, 7, 8};
 
 void bindings_default(Bindings *b) {
   memcpy(b->key, default_keys, sizeof b->key);

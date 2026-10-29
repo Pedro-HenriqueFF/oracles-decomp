@@ -207,7 +207,7 @@ static InputDevice input_device(void) { return touch_on ? DEVICE_TOUCH : pad_las
 static PadStyle pad_style(void) { return pad_style_resolve(settings.pad_style, pad_seen); }
 
 static uint8_t joy_of(Action a) {
-  static const uint8_t bits[ACTIONS] = {JOY_UP, JOY_DOWN, JOY_LEFT, JOY_RIGHT, JOY_A, JOY_B, JOY_START, JOY_SELECT, 0, 0, 0, 0, 0};
+  static const uint8_t bits[ACTIONS] = {JOY_UP, JOY_DOWN, JOY_LEFT, JOY_RIGHT, JOY_A, JOY_B, JOY_START, JOY_SELECT, 0, 0, 0, 0, 0, 0, 0};
   return a < ACTIONS ? bits[a] : 0;
 }
 static uint32_t action_bit(Action a) { return a < ACTIONS ? 1u << a : 0; }
@@ -1051,7 +1051,7 @@ static bool test_key_tick(const char *p, unsigned long long *at, char name[32], 
 
 // "#A", "#UP", ... in ORACLES_TEST_KEYS touch that control of the overlay (one finger).
 static void test_touch(const char *name, bool down) {
-  static const char *const names[ACTIONS] = {"UP", "DOWN", "LEFT", "RIGHT", "A", "B", "START", "SELECT", "PAUSE", "FAST", "SWAP", "X", "Y"};
+  static const char *const names[ACTIONS] = {"UP", "DOWN", "LEFT", "RIGHT", "A", "B", "START", "SELECT", "PAUSE", "FAST", "SWAP", "X", "Y", "SAVE", "LOAD"};
   float x, y;
   for (int a = 0; a < ACTIONS; a++) {
     if (strcmp(name, names[a]) || !touch_point(&layout, (Action)a, &x, &y)) continue;
@@ -2007,12 +2007,9 @@ static GameEnd run_game(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, co
       case SDL_EVENT_KEY_DOWN:
         if (ev.key.repeat) break;
         if (ev.key.scancode == SDL_SCANCODE_AC_BACK) press |= 1u << ACT_PAUSE;
-        else if ((ev.key.mod & SDL_KMOD_GUI) && ev.key.scancode == SDL_SCANCODE_S) save_from = frames;
-        else if ((ev.key.mod & SDL_KMOD_GUI) && ev.key.scancode == SDL_SCANCODE_R) {
-          bool ok = slot_load(gb, dir, 0);
-          if (ok) { live_joy = 0; save_from = NO_SAVE; }
-          show_status(ok ? "Loaded slot 1" : "Slot 1 is empty");
-        }
+        // Cmd+S / Cmd+R on a Mac, Ctrl+S / Ctrl+R elsewhere (either works on both)
+        else if ((ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) && ev.key.scancode == SDL_SCANCODE_S) press |= 1u << ACT_SAVE_STATE;
+        else if ((ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) && ev.key.scancode == SDL_SCANCODE_R) press |= 1u << ACT_LOAD_STATE;
         else if (ev.key.scancode == SDL_SCANCODE_M) {
           muted = !muted;
           if (audio) SDL_SetAudioStreamGain(audio, volume_gain(muted));
@@ -2042,6 +2039,12 @@ static GameEnd run_game(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, co
         if (press >> a & 1) {
           if (a == ACT_FAST) fast = true;
           else if (a == ACT_SWAP) features_quick_swap(gb);
+          else if (a == ACT_SAVE_STATE) save_from = frames;
+          else if (a == ACT_LOAD_STATE) {
+            bool ok = slot_load(gb, dir, 0);
+            if (ok) { live_joy = 0; save_from = NO_SAVE; }
+            show_status(ok ? "Loaded slot 1" : "Slot 1 is empty");
+          }
           else if (item) item_button(gb, dir, a == ACT_ITEM_Y, true);
           else live_joy = tap_press(&taps, live_joy, joy_of((Action)a));
         }

@@ -139,7 +139,7 @@ Same game, two frontends:
   ./build/oracles "roms/Legend of Zelda, The - Oracle of Ages (USA, Australia).gbc" roms/cgb_boot.bin
   ```
 
-  Esc is Start as well; Cmd+S / Cmd+R save and load one state next to the ROM, F12 takes a
+  Esc is Start as well; Cmd+S / Cmd+R (Ctrl+S / Ctrl+R off a Mac) save and load one state next to the ROM, F12 takes a
   screenshot, and the game's battery RAM is kept next to the ROM as `.sav`.
 
 Useful flags on `oracles-native`:

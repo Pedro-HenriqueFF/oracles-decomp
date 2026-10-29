@@ -356,6 +356,9 @@ static void bindings_remap_and_persist(void) {
   ASSERT_EQ(bindings_key_action(&s.bindings, 27), ACT_A);        // X
   ASSERT_EQ(bindings_key_action(&s.bindings, 229), ACT_SELECT);  // right shift, a second key
   ASSERT_EQ(bindings_pad_action(&s.bindings, 5), ACT_PAUSE);     // guide
+  ASSERT_EQ(bindings_pad_action(&s.bindings, 7), ACT_SAVE_STATE); // left stick
+  ASSERT_EQ(bindings_pad_action(&s.bindings, 8), ACT_LOAD_STATE); // right stick
+  ASSERT_EQ(s.bindings.key[ACT_SAVE_STATE][0], NO_BINDING);      // Cmd/Ctrl+S is the app's own
   bindings_bind_key(&s.bindings, ACT_B, 27);                    // X moves from A to B
   ASSERT_EQ(bindings_key_action(&s.bindings, 27), ACT_B);
   ASSERT_EQ(s.bindings.key[ACT_A][0], NO_BINDING);
@@ -372,6 +375,10 @@ static void bindings_remap_and_persist(void) {
   settings_parse(&back, "keys=4,-1\n");                         // older, shorter line: the rest kept
   ASSERT_EQ(back.bindings.key[ACT_UP][0], 4);
   ASSERT_EQ(back.bindings.key[ACT_DOWN][0], s.bindings.key[ACT_DOWN][0]);
+  settings_default(&back);                                      // a pads line from before save/load state
+  settings_parse(&back, "pads=11;12;13;14;0;2;6;4;5;100;9;3;1\n");
+  ASSERT_EQ(back.bindings.pad[ACT_SAVE_STATE], 7);
+  ASSERT_EQ(back.bindings.pad[ACT_LOAD_STATE], 8);
   ControlsMenu m;
   controls_open(&m);
   controls_press(&m, &s.bindings, UI_DOWN);                     // DOWN
@@ -488,7 +495,7 @@ static void touch_hits_each_control(void) {
   float x, y;
   for (int a = 0; a < ACTIONS; a++) {
     bool shown = touch_point(&l, (Action)a, &x, &y);
-    ASSERT_EQ(shown, a != ACT_SWAP);
+    ASSERT_EQ(shown, a != ACT_SWAP && a != ACT_SAVE_STATE && a != ACT_LOAD_STATE);  // those three are keys and buttons only
     if (shown) ASSERT_EQ(touch_hit(&l, x, y), 1u << a);
   }
   float r = l.dpad.w / 2.0f, cx = l.dpad.x + r, cy = l.dpad.y + r;
