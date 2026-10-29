@@ -1928,6 +1928,7 @@ static GameEnd run_game(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, co
   for (int i = 0; i < mod_count; i++) mod_was_enabled[i] = mods_enabled(i);
   for (int i = 0; i < mod_count; i++) if (!mod_was_enabled[i]) { show_status("Mod disabled"); break; }
   uint64_t frames = 0, save_from = NO_SAVE, park_from = 0, ff_due = 0;
+  int ff_ratio = 1;                       // the audio stream's frequency ratio: settings.ff_speed while fast-forwarding
   bool muted = false, parked = false, fast = false;
   GameMode mode = MODE_PLAY;
   GameEnd end = GAME_QUIT;
@@ -2079,6 +2080,15 @@ static GameEnd run_game(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, co
       continue;
     }
 
+    // fast-forward's sound plays ff_speed times as fast; what it left queued is dropped on release,
+    // as at normal speed it would play slowed down and late
+    int ratio = fast && mode == MODE_PLAY && (boot.phase == BOOT_OFF || boot.phase == BOOT_LANGUAGE) ? settings.ff_speed : 1;
+    if (ratio != ff_ratio) {
+      if (audio && ratio == 1) SDL_ClearAudioStream(audio);
+      if (audio) SDL_SetAudioStreamFrequencyRatio(audio, (float)ratio);
+      ff_ratio = ratio;
+    }
+
     if (boot.phase == BOOT_LANGUAGE && FS_MODE(gb) != FS_MODE_LANGUAGE) {
       boot.phase = BOOT_MOVE;             // a language was picked: on to the file
       boot.since = frames;
@@ -2091,13 +2101,17 @@ static GameEnd run_game(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex, co
       apu_read_samples(&gb->apu, samples, APU_RING);
     } else if (fast && mode == MODE_PLAY) {
       // fast-forward: ff_speed times the Game Boy's frame rate, by the clock rather than the display
-      // (a vsynced present comes at anything from 60 to 240 Hz), without sound. Just pressed, or
-      // more than FF_MAX_LAG_NS behind on a device too slow for the speed: count from now.
+      // (a vsynced present comes at anything from 60 to 240 Hz), with the sound sped up to match.
+      // Just pressed, or more than FF_MAX_LAG_NS behind on a device too slow for the speed: count
+      // from now. The ring is drained every frame, as a late catch-up can run more than it holds.
       uint64_t now = SDL_GetTicksNS();
       if ((int64_t)(now - ff_due) > FF_MAX_LAG_NS) ff_due = now;
       if ((int64_t)(ff_due - now) > 0) { SDL_Delay(1); continue; }
-      while ((int64_t)(now - ff_due) >= 0) { features_frame(gb); gb_run_frame(gb); frames++; ff_due += GB_FRAME_NS / settings.ff_speed; }
-      apu_read_samples(&gb->apu, samples, APU_RING);
+      while ((int64_t)(now - ff_due) >= 0) {
+        features_frame(gb); gb_run_frame(gb); frames++; ff_due += GB_FRAME_NS / settings.ff_speed;
+        uint32_t n = apu_read_samples(&gb->apu, samples, APU_RING);
+        if (audio && SDL_GetAudioStreamQueued(audio) <= AUDIO_TARGET_BYTES * ff_ratio) SDL_PutAudioStreamData(audio, samples, n * 4);
+      }
       oracles_frame_wait();
     } else {
       if (mode == MODE_PLAY && audio && SDL_GetAudioStreamQueued(audio) > AUDIO_TARGET_BYTES) { SDL_Delay(1); continue; }
