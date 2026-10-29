@@ -168,7 +168,7 @@ void cutscene10_hook(GB *gb) {
 void cutscene11_hook(GB *gb) {
   BASE(cutscene11);
   uint16_t sp0_ = gb->sp; (void)sp0_;
-  CALL_C(b_+0, func_3ed0_hook, GV(SYM(func_3ed0), 0x335a), b_+3);
+  CALL_C(b_+0, func_3ed0_hook, GV(SYM(func_3ed0), SYM(zeldaAndVillagersCutsceneCaller)), b_+3);
   CYC(b_+3, b_+6);
   TAIL(func_5d41);
 }

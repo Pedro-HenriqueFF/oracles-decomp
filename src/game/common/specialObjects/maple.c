@@ -318,7 +318,7 @@ move:
     CYCT(b_+43, b_+44); ret_effect(gb); return;
   }
   CYC(b_+43, b_+44);
-  CALL_C(b_+44, checkLinkVulnerableAndIDZero_hook, GV(SYM(checkLinkVulnerableAndIDZero), 0x1cde), b_+47);
+  CALL_C(b_+44, checkLinkVulnerableAndIDZero_hook, GV(SYM(checkLinkVulnerableAndIDZero), SYM(checkLinkID0AndControlNormal)), b_+47);
   if (!(F & FC)) {
     CYCT(b_+47, b_+49);
     goto animate;
