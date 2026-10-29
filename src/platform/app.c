@@ -901,7 +901,7 @@ static void show_game(SDL_Renderer *ren, const GBSample *sample, const uint8_t *
   // The X and Y items go in the space widescreen adds beside the status bar, or in the narrow
   // picture's side bars when they are wide enough; the game has nowhere to put them.
   WideOptions o = {seasons, settings.dim_sides, {overlay_theme.bg.r, overlay_theme.bg.g, overlay_theme.bg.b}, rom, rom_size,
-                   settings.four_slots, {features.slot_item[0], features.slot_item[1]}, wide_npcs_room, {0}};
+                   settings.four_slots, {features.slot_item[0], features.slot_item[1]}, wide_npcs_room, {0}, true};
   hud_glyphs(o.glyph);
   if (!settings.widescreen) {
     memcpy(pic, rgb, FB_W * FB_H * 3);

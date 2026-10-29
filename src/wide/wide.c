@@ -234,6 +234,11 @@ static bool room_at(const GBSample *s, const WideOptions *o, const View *v, int 
     if (col < 0 || col > last || row < 0 || row > 15) return false;
     key->room = row * 16 + col;
     key->room_flags = rd(s, (uint16_t)(0xc700 + group * 0x100 + key->room));
+    // The active room remains visible even before its visited flag is set.
+    // During scrolling, room identifies the game's current destination.
+    if (o->fog_of_war && key->room != room &&
+        !(key->room_flags & ROOMFLAG_VISITED))
+      return false;
     if (!o->seasons) key->tileset_add = ages_tileset_add(s, o, r, group, key->room);
     if (o->seasons && group == 0) {
       key->remains_lava = s->wram[0][0x6ca + 2] & 0x20;          // global flags $15 and $16

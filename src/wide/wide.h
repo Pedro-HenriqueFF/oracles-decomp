@@ -30,6 +30,9 @@ typedef struct {
   // the sprites of a neighbouring room, NULL where none are known (wide/npcs.h)
   const WideRoomSprites *(*room_sprites)(int group, int room);
   uint8_t glyph[4];             // the four slots' letters, X Y B A (ui/labels.h codes; 0: the game's own)
+  // Hide unvisited neighboring rooms using the game's room flags.
+  // False retains the original renderer behavior.
+  bool fog_of_war;
 } WideOptions;
 
 // out: WIDE_W x FB_H RGB24.
